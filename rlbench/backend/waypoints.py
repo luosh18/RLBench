@@ -56,8 +56,8 @@ class Point(Waypoint):
                                 euler=self._waypoint.get_orientation(),
                                 ignore_collisions=(self._ignore_collisions or
                                                    ignore_collisions),
-                                trials=100,
-                                max_configs=10,
+                                trials=600,
+                                max_configs=60,
                                 trials_per_goal=10,
                                 algorithm=Algos.RRTConnect)
         return path
