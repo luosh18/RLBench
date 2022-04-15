@@ -147,7 +147,7 @@ class LoadedTask(object):
         try:
             descriptions = self.scene.init_episode(
                 self._variation_index % self.task.variation_count(),
-                max_attempts=10)
+                max_attempts=1)
             print('Task descriptions: ', descriptions)
         except (WaypointError, BoundaryError, Exception) as ex:
             traceback.print_exc()
@@ -289,6 +289,9 @@ if __name__ == '__main__':
     arm_path = join(ENV_DIR_PATH, 'robot_ttms', robot_setup + '.ttm')
     pr.import_model(arm_path)
     arm, gripper = arm_class(), gripper_class()
+    # jaco & mico may collide with table
+    if (robot_setup == 'jaco' or robot_setup == 'mico'):
+        panda_pos[2] += 0.00834
     arm.set_position(panda_pos)
     robot = Robot(arm, gripper)
 
