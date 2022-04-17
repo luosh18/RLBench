@@ -6,11 +6,13 @@ from rlbench.backend.task import Task
 from rlbench.backend.conditions import DetectedCondition
 from rlbench.backend.spawn_boundary import SpawnBoundary
 
+INIT_POS = [1.2, 1.8788, 4.4146, -0.0732, -2.6017, 0.5632]
+
 
 class TutoSlideBlockToTarget(Task):
 
     def init_task(self) -> None:
-        self.robot.arm.set_joint_positions([1.2, 1.8788, 4.4146, -0.0732, -2.6017, -2.5784], True)
+        self.robot.arm.set_joint_positions(INIT_POS, True)
         self.block = Shape('block')
         success_detector = ProximitySensor('success')
         self.target = Shape('target')
@@ -21,7 +23,7 @@ class TutoSlideBlockToTarget(Task):
 
     def init_episode(self, index: int) -> List[str]:
         self._variation_index = index
-        self.robot.arm.set_joint_positions([1.2, 1.8788, 4.4146, -0.0732, -2.6017, -2.5784], True)
+        self.robot.arm.set_joint_positions(INIT_POS, True)
         block_color_name, block_rgb = colors[index]
         self.block.set_color(block_rgb)
         self.boundary.clear()
