@@ -20,7 +20,7 @@ from rlbench.noise_model import NoiseModel
 from rlbench.observation_config import ObservationConfig, CameraConfig
 
 STEPS_BEFORE_EPISODE_START = 10
-ACTUTATE_SPEED = 0.5
+ACTUATE_SPEED = 0.5
 
 
 class Scene(object):
@@ -383,7 +383,7 @@ class Scene(object):
                         if not contains_param:
                             done = False
                             while not done:
-                                done = gripper.actuate(1.0, ACTUTATE_SPEED)
+                                done = gripper.actuate(1.0, ACTUATE_SPEED)
                                 self.pyrep.step()
                                 self.task.step()
                                 if self._obs_config.record_gripper_closing:
@@ -395,7 +395,7 @@ class Scene(object):
                         if not contains_param:
                             done = False
                             while not done:
-                                done = gripper.actuate(0.0, ACTUTATE_SPEED)
+                                done = gripper.actuate(0.0, ACTUATE_SPEED)
                                 self.pyrep.step()
                                 self.task.step()
                                 if self._obs_config.record_gripper_closing:
@@ -407,7 +407,7 @@ class Scene(object):
                         num = float(rest[:rest.index(')')])
                         done = False
                         while not done:
-                            done = gripper.actuate(num, ACTUTATE_SPEED)
+                            done = gripper.actuate(num, ACTUATE_SPEED)
                             self.pyrep.step()
                             self.task.step()
                             if self._obs_config.record_gripper_closing:
