@@ -1,4 +1,4 @@
-import math
+import math, time
 from typing import List
 
 import numpy as np
@@ -42,9 +42,10 @@ class PickAndPlace(Task):
         self.pick_target = Shape('pick_target')
         self.place_dummy = Dummy('place_dummy')
         self.place_target = Shape('place_target')
-        # self.distractors = [
-        #     Shape('stack_blocks_distractor%d' % i)
-        #     for i in range(2)]
+        self.distractor_dummies = [
+            Dummy('distractor_dummy%d' % i) for i in range(2)]
+        self.distractors = [
+            Shape('distractor%d' % i) for i in range(2)]
         self.register_graspable_objects([self.pick_target])
         self.pick_boundary = SpawnBoundary([Shape('pick_boundary')])
         self.place_boundary = SpawnBoundary([Shape('place_boundary')])
@@ -61,25 +62,28 @@ class PickAndPlace(Task):
     def init_episode(self, index: int) -> List[str]:
         ARM_POS = self.robot.arm.get_position()
         self.robot.arm.set_joint_positions(INIT_POS, True)
-        pick_color_name, pick_rgb = colors[index]
-        self.pick_target.set_color(pick_rgb)
 
+        np.random.seed(index)
         color_choices = np.random.choice(
-            list(range(index)) + list(range(index + 1, len(colors))),
-            size=2, replace=False)
-        place_color_name, place_rgb = colors[color_choices[0]]
+            list(range(len(colors))),
+            size=4, replace=False)
+        pick_color_name, pick_rgb = colors[color_choices[0]]
+        self.pick_target.set_color(pick_rgb)
+        place_color_name, place_rgb = colors[color_choices[1]]
         self.place_target.set_color(place_rgb)
+        _, rgb = colors[color_choices[2]]
+        self.distractors[0].set_color(rgb)
+        _, rgb = colors[color_choices[3]]
+        self.distractors[1].set_color(rgb)
+        np.random.seed()
 
-        self.place_boundary.clear()
-        self.place_boundary.sample(
-            self.place_dummy, min_rotation=(0.0, 0.0, 0.0),
-            max_rotation=(0.0, 0.0, 0.0))
         self.pick_boundary.clear()
         self.pick_boundary.sample(self.pick_dummy)
-        # for block in [self.target_block] + self.distractors:
-        #     self.boundary.sample(block, min_distance=0.1)
+        self.place_boundary.clear()
+        for dummy in [self.place_dummy] + self.distractor_dummies:
+            self.place_boundary.sample(dummy, min_distance=0)
 
-        return ['pick up the %s object and place it to the target' % pick_color_name]
+        return ['pick up the {} object and place it to the {} object'.format(pick_color_name, place_color_name)]
 
     def variation_count(self) -> int:
         return len(colors)
