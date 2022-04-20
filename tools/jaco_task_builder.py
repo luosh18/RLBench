@@ -156,7 +156,7 @@ class LoadedTask(object):
 
     def new_demo(self):
         try:
-            self.scene.get_demo(False, randomly_place=False)
+            self.scene.get_demo(True, randomly_place=False)
         except (WaypointError, NoWaypointsError, DemoError, Exception) as e:
             traceback.print_exc()
         success, terminate = self.task.success()
