@@ -38,17 +38,21 @@ def fix_orientation(waypoint: Point) -> np.ndarray:
 class PickAndPlace(Task):
 
     def init_task(self) -> None:
-        self.target_block = Shape('pick_and_place_target')
+        self.pick_dummy = Dummy('pick_dummy')
+        self.pick_target = Shape('pick_target')
+        self.place_dummy = Dummy('place_dummy')
+        self.place_target = Shape('place_target')
         # self.distractors = [
         #     Shape('stack_blocks_distractor%d' % i)
         #     for i in range(2)]
-        self.register_graspable_objects([self.target_block])
-        self.boundary = SpawnBoundary([Shape('pick_and_lift_boundary')])
-        self.success_detector = ProximitySensor('pick_and_place_success')
+        self.register_graspable_objects([self.pick_target])
+        self.pick_boundary = SpawnBoundary([Shape('pick_boundary')])
+        self.place_boundary = SpawnBoundary([Shape('place_boundary')])
+        self.success_detector = ProximitySensor('place_success')
 
         cond_set = ConditionSet([
             # GraspedCondition(self.robot.gripper, self.target_block),
-            DetectedCondition(self.target_block, self.success_detector)
+            DetectedCondition(self.pick_target, self.success_detector)
         ])
         self.register_success_conditions([cond_set])
         # add fix_orientation for all waypoints
@@ -57,27 +61,25 @@ class PickAndPlace(Task):
     def init_episode(self, index: int) -> List[str]:
         ARM_POS = self.robot.arm.get_position()
         self.robot.arm.set_joint_positions(INIT_POS, True)
-        block_color_name, block_rgb = colors[index]
-        self.target_block.set_color(block_rgb)
+        pick_color_name, pick_rgb = colors[index]
+        self.pick_target.set_color(pick_rgb)
 
         color_choices = np.random.choice(
             list(range(index)) + list(range(index + 1, len(colors))),
             size=2, replace=False)
-        # for i, ob in enumerate(self.distractors):
-        #     name, rgb = colors[color_choices[int(i)]]
-        #     ob.set_color(rgb)
+        place_color_name, place_rgb = colors[color_choices[0]]
+        self.place_target.set_color(place_rgb)
 
-        self.boundary.clear()
-        # self.boundary.sample(
-        #     self.success_detector, min_rotation=(0.0, 0.0, 0.0),
-        #     max_rotation=(0.0, 0.0, 0.0))
+        self.place_boundary.clear()
+        self.place_boundary.sample(
+            self.place_dummy, min_rotation=(0.0, 0.0, 0.0),
+            max_rotation=(0.0, 0.0, 0.0))
+        self.pick_boundary.clear()
+        self.pick_boundary.sample(self.pick_dummy)
         # for block in [self.target_block] + self.distractors:
         #     self.boundary.sample(block, min_distance=0.1)
 
-        return ['pick up the %s block and lift it up to the target' %
-                block_color_name,
-                'grasp the %s block to the target' % block_color_name,
-                'lift the %s block up to the target' % block_color_name]
+        return ['pick up the %s object and place it to the target' % pick_color_name]
 
     def variation_count(self) -> int:
         return len(colors)
