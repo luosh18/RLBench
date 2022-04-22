@@ -1,4 +1,4 @@
-import math, time
+import math, time, os
 from typing import List
 
 import numpy as np
@@ -59,6 +59,8 @@ class PickAndPlace(Task):
         # add fix_orientation for all waypoints
         [self.register_waypoint_ability_start(i, fix_orientation) for i in range(20)]
 
+        self.spawned_objects: List[Object] = []
+
     def init_episode(self, index: int) -> List[str]:
         ARM_POS = self.robot.arm.get_position()
         self.robot.arm.set_joint_positions(INIT_POS, True)
@@ -90,6 +92,23 @@ class PickAndPlace(Task):
 
     def is_static_workspace(self) -> bool:
         return True
+
+    # def cleanup(self) -> None:
+    #     [obj.remove() for obj in self.spawned_objects if obj.still_exists()]
+    #     self.spawned_objects.clear()
+
+    def spawn_object(self, name, parent_object: Object = None) -> Shape:
+        assets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  '../assets/pick_and_place_ttms')
+        filename = os.path.join(assets_dir, name + '.ttm')
+        obj = self.pyrep.import_model(filename)
+        if parent_object is not None:
+            obj.set_parent(parent_object, False)
+            obj.set_position(np.zeros(3), relative_to=parent_object, reset_dynamics=True)
+        _, _, _, _, min_z, _ = obj.get_bounding_box()
+        x, y, z = obj.get_position()
+        obj.set_position([x, y, z - min_z])
+        self.spawned_objects.append(obj)
 
     def _get_waypoints(self, validating=False) -> List[Waypoint]:
         waypoint_name = 'waypoint%d'
