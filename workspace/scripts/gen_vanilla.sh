@@ -1,0 +1,1 @@
+python3 dataset_generator.py --save_path=$HOME/rlbench_data/ --tasks=pick_and_place --processes=8 --episodes_per_task=3
