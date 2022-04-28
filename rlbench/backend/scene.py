@@ -20,7 +20,7 @@ from rlbench.noise_model import NoiseModel
 from rlbench.observation_config import ObservationConfig, CameraConfig
 
 STEPS_BEFORE_EPISODE_START = 10
-ACTUATE_SPEED = 0.5
+ACTUATE_SPEED = 1.5
 
 
 class Scene(object):
