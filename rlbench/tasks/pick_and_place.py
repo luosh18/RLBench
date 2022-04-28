@@ -18,14 +18,10 @@ from rlbench.backend.task import Task
 from rlbench.backend.waypoints import Point, PredefinedPath, Waypoint
 from rlbench.const import colors
 
-ARM_POS = np.array([-3.0895e-01, 0, +8.2002e-01])
-INIT_POS = [1.461442470550537, 1.7185994386672974, 4.47493839263916,
-            -0.13187171518802643, -2.4193673133850098, 0.6419594287872314]
-
 
 def _fix_orientation(point: Object) -> np.ndarray:
     # delta = (\Delta_x, \Delta_y)
-    delta = point.get_position()[:2] - ARM_POS[:2]
+    delta = point.get_position()[:2] - PickAndPlace.ARM_POS[:2]
     distance = np.linalg.norm(delta)
     rotation = -math.atan(delta[1] / delta[0])
     rotation_fix = 4 * math.pi * ((max(distance, 0.55) - 0.55) ** 2)
@@ -34,11 +30,20 @@ def _fix_orientation(point: Object) -> np.ndarray:
     return point.get_orientation()
 
 
-def fix_orientation(waypoint: Point) -> np.ndarray:
-    return _fix_orientation(waypoint.get_waypoint_object())
+def fix_waypoint(waypoint: Point, update=True) -> np.ndarray:
+    _fix_orientation(waypoint.get_waypoint_object())
+    pose = waypoint.get_waypoint_object().get_pose()
+    print(pose)
+    if update:
+        PickAndPlace.WAYPOINT_POSE = pose
+    return pose
 
 
 class PickAndPlace(Task):
+    ARM_POS = np.array([-3.0895e-01, 0, +8.2002e-01])
+    INIT_POS = [1.461442470550537, 1.7185994386672974, 4.47493839263916,
+                -0.13187171518802643, -2.4193673133850098, 0.6419594287872314]
+    WAYPOINT_POSE = np.zeros(6)
 
     def init_task(self) -> None:
         self.pick_dummy = Dummy('pick_dummy')
@@ -49,14 +54,14 @@ class PickAndPlace(Task):
         self.place_boundary = SpawnBoundary([Shape('place_boundary')])
         self.success_detector = ProximitySensor('place_success')
 
-        [self.register_waypoint_ability_start(i, fix_orientation) for i in range(20)]
+        [self.register_waypoint_ability_start(i, fix_waypoint) for i in range(20)]
 
         self.spawned_objects: List[Shape] = []
 
     def init_episode(self, index: int) -> List[str]:
         self._variation_index = index
-        ARM_POS = self.robot.arm.get_position()
-        self.robot.arm.set_joint_positions(INIT_POS, True)
+        PickAndPlace.ARM_POS = self.robot.arm.get_position()
+        self.robot.arm.set_joint_positions(PickAndPlace.INIT_POS, True)
         self.setup_objects(OBJ_LIST[index])
         # set color. TODO: set texture instead
         np.random.seed(index)
@@ -87,6 +92,7 @@ class PickAndPlace(Task):
                  self.distractor_dummies[0].get_pose(),
                  self.distractor_dummies[1].get_pose()]
         observation.misc['poses'] = poses
+        observation.misc['waypoint_pose'] = PickAndPlace.WAYPOINT_POSE
         return observation
 
     def spawn_object(self, name, parent_object: Object = None) -> Shape:
@@ -141,9 +147,6 @@ class PickAndPlace(Task):
         self.object_poses = [obj.get_pose() for obj in [self.pick_dummy, self.place_dummy] + self.distractor_dummies]
         return self.object_poses
 
-    # def get_setup_and_demo(self):
-    #     return SetupAndDemo(self.object_names, self.texture_names, self.object_poses)
-
     def _get_waypoints(self, validating=False) -> List[Waypoint]:
         waypoint_name = 'waypoint%d'
         waypoints = []
@@ -182,7 +185,7 @@ class PickAndPlace(Task):
             i += 1
         
         # fix_orientation before check feasible
-        [fix_orientation(p) for p in waypoints]
+        [fix_waypoint(p) for p in waypoints]
         # Check if all of the waypoints are feasible
         feasible, way_i = self._feasible(waypoints)
         if not feasible:
