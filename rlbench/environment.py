@@ -105,6 +105,9 @@ class Environment(object):
             arm_path = join(DIR_PATH, 'robot_ttms', self._robot_setup + '.ttm')
             self._pyrep.import_model(arm_path)
             arm, gripper = arm_class(), gripper_class()
+            # jaco & mico may collide with table
+            if (self._robot_setup == 'jaco' or self._robot_setup == 'mico'):
+                panda_pos[2] += 0.00834
             arm.set_position(panda_pos)
         else:
             arm, gripper = arm_class(), gripper_class()
