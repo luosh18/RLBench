@@ -4,13 +4,13 @@ import time
 from typing import List
 
 import numpy as np
-from pyrep.const import ObjectType
+from pyrep.const import ObjectType, TextureMappingMode
 from pyrep.objects.cartesian_path import CartesianPath
 from pyrep.objects.dummy import Dummy
 from pyrep.objects.object import Object
 from pyrep.objects.proximity_sensor import ProximitySensor
 from pyrep.objects.shape import Shape
-from rlbench.backend.conditions import ConditionSet, DetectedCondition
+from rlbench.backend.conditions import ConditionSet, DetectedCondition, NothingGrasped
 from rlbench.backend.exceptions import WaypointError
 from rlbench.backend.observation import Observation
 from rlbench.backend.spawn_boundary import SpawnBoundary
@@ -33,7 +33,6 @@ def _fix_orientation(point: Object) -> np.ndarray:
 def fix_waypoint(waypoint: Point, update=True) -> np.ndarray:
     _fix_orientation(waypoint.get_waypoint_object())
     pose = waypoint.get_waypoint_object().get_pose()
-    print(pose)
     if update:
         PickAndPlace.WAYPOINT_POSE = pose
     return pose
@@ -63,17 +62,19 @@ class PickAndPlace(Task):
         PickAndPlace.ARM_POS = self.robot.arm.get_position()
         self.robot.arm.set_joint_positions(PickAndPlace.INIT_POS, True)
         self.setup_objects(OBJ_LIST[index])
-        # set color. TODO: set texture instead
-        np.random.seed(index)
-        color_choices = np.random.choice(list(range(len(colors))), size=4, replace=False)
-        for color_choice, spawned_object in zip(color_choices, self.spawned_objects):
-            _, rgb = colors[color_choice]
-            [o.set_color(rgb) for o in spawned_object.get_objects_in_tree(object_type=ObjectType.SHAPE)]
-        np.random.seed()
-        pick_color_name, _ = colors[color_choices[0]]
-        place_color_name, _ = colors[color_choices[1]]
-
-        return [pick_color_name, place_color_name, self.setup_poses()]
+        self.setup_textures(TEX_LIST[index])
+        self.setup_poses()
+        return OBJ_LIST[index] + TEX_LIST[index]
+        # # set color
+        # np.random.seed(index)
+        # color_choices = np.random.choice(list(range(len(colors))), size=4, replace=False)
+        # for color_choice, spawned_object in zip(color_choices, self.spawned_objects):
+        #     _, rgb = colors[color_choice]
+        #     [o.set_color(rgb) for o in spawned_object.get_objects_in_tree(object_type=ObjectType.SHAPE)]
+        # np.random.seed()
+        # pick_color_name, _ = colors[color_choices[0]]
+        # place_color_name, _ = colors[color_choices[1]]
+        # return [pick_color_name, place_color_name, self.setup_poses()]
 
     def variation_count(self) -> int:
         return len(OBJ_LIST)
@@ -109,9 +110,8 @@ class PickAndPlace(Task):
         self.spawned_objects.append(obj)
         return obj
 
-    def setup_objects(self, object_names: List[str], texture_names: List[str] = None):
+    def setup_objects(self, object_names: List[str]):
         self.object_names = object_names
-        self.texture_names = texture_names
         # spawn objects
         self.cleanup()
         for name, parent_object in zip(object_names, [self.pick_dummy, self.place_dummy] + self.distractor_dummies):
@@ -125,13 +125,25 @@ class PickAndPlace(Task):
             self.place_target.get_position())
         # register success conditions
         self.register_graspable_objects([self.pick_target])
-        self.register_success_conditions(
-            [DetectedCondition(self.pick_target, self.success_detector)])
-        # set textures
-        if texture_names is not None and len(texture_names) == len(object_names):
-            for obj, texture in zip(self.spawned_objects, texture_names):
-                # load and set texture
-                pass
+        self.register_success_conditions([
+            DetectedCondition(self.pick_target, self.success_detector),
+            NothingGrasped(self.robot.gripper),
+        ])
+
+    def setup_textures(self, texture_names: List[str]):
+        assets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  '../assets/textures')
+        if len(texture_names) == len(self.spawned_objects):
+            self.texture_names = texture_names
+            for obj, name in zip(self.spawned_objects, texture_names):
+                filename = os.path.join(assets_dir, str(name) + '.png')
+                text_ob, texture = self.pyrep.create_texture(filename)                
+                for shape in obj.get_objects_in_tree(object_type=ObjectType.SHAPE):
+                    if shape.is_renderable():
+                        shape.set_texture(texture, TextureMappingMode.CUBE,
+                                          repeat_along_u=True, repeat_along_v=True,
+                                          uv_scaling=[.15, .15])
+                text_ob.remove()
 
     def setup_poses(self, poses: List[np.ndarray] = None) -> List[np.ndarray]:
         if poses is None:
@@ -140,7 +152,7 @@ class PickAndPlace(Task):
             self.pick_boundary.sample(self.pick_dummy)
             self.place_boundary.clear()
             for dummy in [self.place_dummy] + self.distractor_dummies:
-                self.place_boundary.sample(dummy, min_distance=0.05)
+                self.place_boundary.sample(dummy, min_distance=0.15)
         else:
             for pose, dummy in zip(poses, [self.pick_dummy, self.place_dummy] + self.distractor_dummies):
                 dummy.set_pose(pose)
@@ -197,5 +209,17 @@ class PickAndPlace(Task):
 
 
 OBJ_LIST = [
-    ['Knight', 'Low_poly_bowl_or_cup', 'plate', 'plate']
+    ['Knight', 'Low_poly_bowl_or_cup', '-dinnerplate--148425', 'plate'],
+    ['Knight', '-dinnerplate--148425', 'plate--81292', 'plate'],
+    ['Knight', 'plate--81292', 'russian-porcelain-plate-free-3d-model-98095', 'plate'],
+    ['Knight', 'russian-porcelain-plate-free-3d-model-98095', '-dinnerplate--148425', 'plate'],
+    ['Knight', 'spinning-plate-v1--644338', '-dinnerplate--148425', 'plate'],
+]
+
+TEX_LIST = [
+    [0, 1, 2, 3],
+    [5, 1, 2, 3],
+    [10, 7, 2, 3],
+    [6, 8, 4, 9],
+    [3, 9, 5, 7],
 ]

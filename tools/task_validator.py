@@ -22,7 +22,7 @@ class TaskValidationError(Exception):
 
 
 def task_smoke(task: Task, scene: Scene, variation=-1, demos=4, success=0.50,
-               max_variations=3, test_demos=True):
+               max_variations=MAX_VARIATIONS, test_demos=True):
     # -1 variations for all.
 
     print('Running task validator on task: %s' % task.get_name())
