@@ -117,3 +117,6 @@ dmypy.json
 .pyre/
 
 index.html
+
+# textures
+rlbench/assets/textures/
