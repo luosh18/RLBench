@@ -134,7 +134,8 @@ class LoadedTask(object):
 
     def new_variation(self):
         try:
-            self._variation_index += 1
+            print('variation:', self._variation_index)
+            self._variation_index = int(input('new: '))
             descriptions = self.scene.init_episode(
                 self._variation_index % self.task.variation_count(),
                 max_attempts=10)

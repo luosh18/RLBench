@@ -180,6 +180,7 @@ def run(i, lock, task_index, variation_count, results, file_lock, tasks):
     obs_config.set_all(True)
 
     obs_config.gripper_touch_forces = False # jaco has no touch sensors
+    obs_config.record_gripper_closing = False # to be determined, Gripper.actuate might need some time
 
     obs_config.right_shoulder_camera.image_size = img_size
     obs_config.left_shoulder_camera.image_size = img_size

@@ -426,7 +426,7 @@ class Scene(object):
         # Some tasks may need additional physics steps
         # (e.g. ball rowling to goal)
         if not success:
-            for _ in range(10):
+            for _ in range(20):
                 self.pyrep.step()
                 self.task.step()
                 self._demo_record_step(demo, record, callable_each_step)

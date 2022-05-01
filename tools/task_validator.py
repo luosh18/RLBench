@@ -14,7 +14,7 @@ import os
 import argparse
 
 DEMO_ATTEMPTS = 5
-MAX_VARIATIONS = 100
+MAX_VARIATIONS = 500
 
 
 class TaskValidationError(Exception):
