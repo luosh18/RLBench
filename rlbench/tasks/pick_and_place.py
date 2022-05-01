@@ -1,22 +1,46 @@
 import math
 import os
+import pickle
 import time
 from typing import List
 
 import numpy as np
+from pyrep import PyRep
 from pyrep.const import ObjectType, TextureMappingMode
 from pyrep.objects.cartesian_path import CartesianPath
 from pyrep.objects.dummy import Dummy
 from pyrep.objects.object import Object
 from pyrep.objects.proximity_sensor import ProximitySensor
 from pyrep.objects.shape import Shape
-from rlbench.backend.conditions import ConditionSet, DetectedCondition, NothingGrasped
+from rlbench.backend.conditions import DetectedCondition, NothingGrasped
 from rlbench.backend.exceptions import WaypointError
 from rlbench.backend.observation import Observation
+from rlbench.backend.robot import Robot
 from rlbench.backend.spawn_boundary import SpawnBoundary
 from rlbench.backend.task import Task
 from rlbench.backend.waypoints import Point, PredefinedPath, Waypoint
 from rlbench.const import colors
+
+
+class DatasetConfig():
+    def __init__(self, VARIATION, EPISODE, TEST_VARIATION, TEST_EPISODE,
+                 train_objects: List[List[str]],
+                 train_textures: List[List[str]],
+                 test_objects: List[List[str]],
+                 test_textures: List[List[str]],) -> None:
+        assert VARIATION == len(train_objects) == len(train_textures)
+        assert TEST_VARIATION == len(test_objects) == len(test_textures)
+        self.VARIATION = VARIATION
+        self.EPISODE = EPISODE
+        self.TEST_VARIATION = TEST_VARIATION
+        self.TEST_EPISODE = TEST_EPISODE
+        self.train_objects = train_objects
+        self.train_textures = train_textures
+        self.test_objects = test_objects
+        self.test_textures = test_textures
+
+    def __str__(self) -> str:
+        return str(self.__dict__)
 
 
 def _fix_orientation(point: Object) -> np.ndarray:
@@ -27,6 +51,7 @@ def _fix_orientation(point: Object) -> np.ndarray:
     rotation_fix = 4 * math.pi * ((max(distance, 0.55) - 0.55) ** 2)
     point.set_orientation(
         [math.radians(-90), rotation + rotation_fix, math.radians(-90)])
+    point.rotate([0, math.radians(-12), 0])
     return point.get_orientation()
 
 
@@ -44,6 +69,10 @@ class PickAndPlace(Task):
                 -0.13187171518802643, -2.4193673133850098, 0.6419594287872314]
     WAYPOINT_POSE = np.zeros(6)
 
+    def __init__(self, pyrep: PyRep, robot: Robot, name: str = None):
+        super().__init__(pyrep, robot, name)
+        self._loaded_dataset_config = False
+
     def init_task(self) -> None:
         self.pick_dummy = Dummy('pick_dummy')
         self.place_dummy = Dummy('place_dummy')
@@ -57,27 +86,32 @@ class PickAndPlace(Task):
 
         self.spawned_objects: List[Shape] = []
 
+        if not self._loaded_dataset_config:
+            self.load_dataset_config()
+
+    def load_dataset_config(self, train=True):
+        """default load training set"""
+        filename = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                '../assets/dataset_config.pkl')
+        with open(filename, 'rb') as f:
+            dataset_config = pickle.load(f)
+            self.OBJ_LIST = dataset_config.train_objects if train else dataset_config.test_objects
+            self.TEX_LIST = dataset_config.train_textures if train else dataset_config.test_textures
+            self._loaded_dataset_config = True
+
     def init_episode(self, index: int) -> List[str]:
         self._variation_index = index
         PickAndPlace.ARM_POS = self.robot.arm.get_position()
         self.robot.arm.set_joint_positions(PickAndPlace.INIT_POS, True)
-        self.setup_objects(OBJ_LIST[index])
-        self.setup_textures(TEX_LIST[index])
+        self.setup_objects(self.OBJ_LIST[index])
+        self.setup_textures(self.TEX_LIST[index])
         self.setup_poses()
-        return OBJ_LIST[index] + TEX_LIST[index]
-        # # set color
-        # np.random.seed(index)
-        # color_choices = np.random.choice(list(range(len(colors))), size=4, replace=False)
-        # for color_choice, spawned_object in zip(color_choices, self.spawned_objects):
-        #     _, rgb = colors[color_choice]
-        #     [o.set_color(rgb) for o in spawned_object.get_objects_in_tree(object_type=ObjectType.SHAPE)]
-        # np.random.seed()
-        # pick_color_name, _ = colors[color_choices[0]]
-        # place_color_name, _ = colors[color_choices[1]]
-        # return [pick_color_name, place_color_name, self.setup_poses()]
+        return self.OBJ_LIST[index] + self.TEX_LIST[index]
 
     def variation_count(self) -> int:
-        return len(OBJ_LIST)
+        if not self._loaded_dataset_config:
+            self.load_dataset_config()
+        return len(self.OBJ_LIST)
 
     def is_static_workspace(self) -> bool:
         return True
@@ -104,9 +138,9 @@ class PickAndPlace(Task):
         if parent_object is not None:
             obj.set_parent(parent_object, False)
             obj.set_position(np.zeros(3), relative_to=parent_object, reset_dynamics=True)
-        _, _, _, _, min_z, _ = obj.get_bounding_box()
-        x, y, z = obj.get_position()
-        obj.set_position([x, y, z - min_z])
+            _, _, _, _, min_z, _ = obj.get_bounding_box()
+            x, y, z = parent_object.get_position()
+            parent_object.set_position([x, y, z - min_z])
         self.spawned_objects.append(obj)
         return obj
 
@@ -152,7 +186,7 @@ class PickAndPlace(Task):
             self.pick_boundary.sample(self.pick_dummy)
             self.place_boundary.clear()
             for dummy in [self.place_dummy] + self.distractor_dummies:
-                self.place_boundary.sample(dummy, min_distance=0.15)
+                self.place_boundary.sample(dummy, min_distance=0.175)
         else:
             for pose, dummy in zip(poses, [self.pick_dummy, self.place_dummy] + self.distractor_dummies):
                 dummy.set_pose(pose)
@@ -208,18 +242,18 @@ class PickAndPlace(Task):
         return waypoints
 
 
-OBJ_LIST = [
-    ['Knight', 'Low_poly_bowl_or_cup', '-dinnerplate--148425', 'plate'],
-    ['Knight', '-dinnerplate--148425', 'plate--81292', 'plate'],
-    ['Knight', 'plate--81292', 'russian-porcelain-plate-free-3d-model-98095', 'plate'],
-    ['Knight', 'russian-porcelain-plate-free-3d-model-98095', '-dinnerplate--148425', 'plate'],
-    ['Knight', 'spinning-plate-v1--644338', '-dinnerplate--148425', 'plate'],
-]
+# OBJ_LIST = [
+#     ['targets/Knight', 'bowls/Low_poly_bowl_or_cup', 'plates/-dinnerplate--148425', 'plates/plate'],
+#     ['targets/Knight', 'plates/-dinnerplate--148425', 'plates/plate--81292', 'plates/plate'],
+#     ['targets/Knight', 'plates/plate--81292', 'plates/russian-porcelain-plate-free-3d-model-98095', 'plates/plate'],
+#     ['targets/Knight', 'plates/russian-porcelain-plate-free-3d-model-98095', 'plates/-dinnerplate--148425', 'plates/plate'],
+#     ['targets/Knight', 'plates/spinning-plate-v1--644338', 'plates/-dinnerplate--148425', 'plates/plate'],
+# ]
 
-TEX_LIST = [
-    [0, 1, 2, 3],
-    [5, 1, 2, 3],
-    [10, 7, 2, 3],
-    [6, 8, 4, 9],
-    [3, 9, 5, 7],
-]
+# TEX_LIST = [
+#     ['banded_0002', 'banded_0013', 'banded_0046', 'banded_0077'],
+#     ['banded_0117', 'banded_0128', 'blotchy_0003', 'blotchy_0017'],
+#     ['banded_0036', 'banded_0090', 'lined_0086', 'banded_0067'],
+#     ['chequered_0066', 'banded_0092', 'chequered_0066', 'cobwebbed_0053'],
+#     ['chequered_0066', 'banded_0092', 'chequered_0066', 'cobwebbed_0053'],
+# ]
