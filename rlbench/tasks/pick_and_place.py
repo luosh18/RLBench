@@ -82,7 +82,8 @@ class PickAndPlace(Task):
         self.place_boundary = SpawnBoundary([Shape('place_boundary')])
         self.success_detector = ProximitySensor('place_success')
 
-        [self.register_waypoint_ability_start(i, fix_waypoint) for i in range(20)]
+        for i in range(20):
+            self.register_waypoint_ability_start(i, fix_waypoint)
 
         self.spawned_objects: List[Shape] = []
 
@@ -130,6 +131,9 @@ class PickAndPlace(Task):
         observation.misc['waypoint_pose'] = PickAndPlace.WAYPOINT_POSE
         return observation
 
+    def get_low_dim_state(self) -> np.ndarray:
+        return np.array([obj.get_pose() for obj in self.spawned_objects]).flatten()
+
     def spawn_object(self, name, parent_object: Object = None) -> Shape:
         assets_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                   '../assets/pick_and_place_ttms')
@@ -137,7 +141,7 @@ class PickAndPlace(Task):
         obj = self.pyrep.import_model(filename)
         if parent_object is not None:
             obj.set_parent(parent_object, False)
-            obj.set_position(np.zeros(3), relative_to=parent_object, reset_dynamics=True)
+            obj.set_position(np.zeros(3), parent_object, True)
             _, _, _, _, min_z, _ = obj.get_bounding_box()
             x, y, z = parent_object.get_position()
             parent_object.set_position([x, y, z - min_z])
@@ -171,8 +175,8 @@ class PickAndPlace(Task):
             self.texture_names = texture_names
             for obj, name in zip(self.spawned_objects, texture_names):
                 filename = os.path.join(assets_dir, str(name) + '.png')
-                text_ob, texture = self.pyrep.create_texture(filename)                
-                for shape in obj.get_objects_in_tree(object_type=ObjectType.SHAPE):
+                text_ob, texture = self.pyrep.create_texture(filename)
+                for shape in obj.get_objects_in_tree(object_type=ObjectType.SHAPE, exclude_base=False):
                     if shape.is_renderable():
                         shape.set_texture(texture, TextureMappingMode.CUBE,
                                           repeat_along_u=True, repeat_along_v=True,
@@ -190,7 +194,8 @@ class PickAndPlace(Task):
         else:
             for pose, dummy in zip(poses, [self.pick_dummy, self.place_dummy] + self.distractor_dummies):
                 dummy.set_pose(pose)
-        self.object_poses = [obj.get_pose() for obj in [self.pick_dummy, self.place_dummy] + self.distractor_dummies]
+        self.object_poses = [obj.get_pose() for obj in
+                             [self.pick_dummy, self.place_dummy] + self.distractor_dummies]
         return self.object_poses
 
     def _get_waypoints(self, validating=False) -> List[Waypoint]:
@@ -229,7 +234,7 @@ class PickAndPlace(Task):
                     (self._waypoint_additional_inits[name], way))
             waypoints.append(way)
             i += 1
-        
+
         # fix_orientation before check feasible
         [fix_waypoint(p) for p in waypoints]
         # Check if all of the waypoints are feasible
