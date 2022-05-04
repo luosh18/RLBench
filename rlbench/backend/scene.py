@@ -20,7 +20,7 @@ from rlbench.noise_model import NoiseModel
 from rlbench.observation_config import ObservationConfig, CameraConfig
 
 STEPS_BEFORE_EPISODE_START = 10
-ACTUATE_SPEED = 1.5
+ACTUATE_SPEED = 0.1
 
 
 class Scene(object):
@@ -116,10 +116,10 @@ class Scene(object):
         """Calls the task init_episode and puts randomly in the workspace.
         """
 
-        self._variation_index = index
-
         if not self._has_init_task:
             self.init_task()
+
+        self._variation_index = index
 
         # Try a few times to init and place in the workspace
         attempts = 0

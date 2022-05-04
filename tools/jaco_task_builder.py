@@ -146,6 +146,7 @@ class LoadedTask(object):
 
     def new_episode(self):
         try:
+            self.scene.reset()
             descriptions = self.scene.init_episode(
                 self._variation_index % self.task.variation_count(),
                 max_attempts=1)

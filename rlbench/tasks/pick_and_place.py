@@ -123,6 +123,8 @@ class PickAndPlace(Task):
         self.spawned_objects.clear()
 
     def decorate_observation(self, observation: Observation) -> Observation:
+        observation.gripper_open = (
+            0.0 if len(self.robot.gripper.get_grasped_objects()) > 0 else 1.0)
         poses = [self.pick_dummy.get_pose(),
                  self.place_dummy.get_pose(),
                  self.distractor_dummies[0].get_pose(),
