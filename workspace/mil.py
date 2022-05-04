@@ -1,3 +1,4 @@
+from turtle import forward
 from typing import List
 
 import torch
@@ -58,9 +59,14 @@ class Daml(nn.Module):
         super().__init__()
         self.action_size = action_size  # dim action (output)
         self.state_size = state_size  # dim robot config (state)
+        # set device
+        self.device = torch.device(
+            'cuda' if FLAGS.cuda and torch.cuda.is_available() else 'cpu'
+        )
         # build model
         with Timer("Building pytorch network"):
             self.construct_model()
+            self.to(self.device)
 
     def construct_model(self):
         # build model
@@ -97,20 +103,33 @@ class Daml(nn.Module):
         strides = list(map(int, FLAGS.strides))
         # TODO: fix padding. MIL use padding='same' in tf,
         # pytorch: padding='same' is not supported for strided convolutions
-        self.convs = [
-            nn.Conv2d(fan_in, num_filters, filter_size,
-                      strides[0], padding='same' if strides[0] == 1 else 0)
-        ] + [
-            nn.Conv2d(num_filters, num_filters, filter_size,
-                      stride, padding='same' if stride == 1 else 0)
-            for stride in strides[1:]
+        conv = nn.Conv2d(fan_in, num_filters, filter_size,
+                         strides[0], padding='same' if strides[0] == 1 else 0)
+        # FLAGS.initialization == 'xavier'. init weight and bias
+        init_weights_xavier(conv.weight)
+        init_weights_zeros(conv.bias)
+        convs = [
+            conv,
+            nn.GroupNorm(1, num_filters),
+            # each conv2d should followed by layer normalization
+            # use Group Norm instead, according to:
+            # https://arxiv.org/pdf/1803.08494.pdf page:4 "3.1. Formulation" "Relation to Prior Work"
+            nn.ReLU(),
         ]
-        for conv in self.convs:
-            # FLAGS.initialization == 'xavier'. init weight and bias
+        for stride in strides[1:]:
+            conv = nn.Conv2d(num_filters, num_filters, filter_size,
+                             stride, padding='same' if stride == 1 else 0)
             init_weights_xavier(conv.weight)
             init_weights_zeros(conv.bias)
+            convs.append(conv)
+            convs.append(nn.GroupNorm(1, num_filters))
+            convs.append(nn.ReLU())
+        self.convs = nn.Sequential(*convs)
 
-        # FLAGS.fp == True. spatial softmax after 2d cnv, equals to the twice size of filters (checked)
+        ###### Spatial Softmax after 2d conv ######
+        # assume FLAGS.fp == True.
+        self.softmax = nn.Softmax(dim=-1)
+        # output shape equals to the twice size of filters (checked)
         self.n_conv_output = num_filters * 2
 
         ###### temporal convolution layers: predicted final eept, upper head ######
@@ -184,15 +203,59 @@ class Daml(nn.Module):
             init_weights_zeros(temp_conv.bias)
 
     def forward_conv(self, image_input, testing=False):
-        pass
+        # build bias transformation for conv2d
+        bt_conv = torch.zeros_like(
+            image_input, dtype=torch.float32, device=self.device)
+        bt_conv += self.conv_bt
+        # concat image input and bias transformation
+        conv_in = torch.cat((image_input, bt_conv), 1)
+
+        ###### CNN Forward ######
+        conv_out: torch.Tensor = self.convs(conv_in)
+
+        ###### Spatial softmax layers ######
+        # TODO: understand this part
+        _, fp, rows, cols = conv_out.shape  # [B*T,64,13,12]
+        x_map = torch.zeros((rows, cols),
+                            dtype=torch.float32, device=self.device)
+        y_map = torch.zeros((rows, cols),
+                            dtype=torch.float32, device=self.device)
+
+        for i in range(rows):
+            for j in range(cols):
+                x_map[i, j] = (i - rows / 2.0) / rows
+                y_map[i, j] = (j - cols / 2.0) / cols
+        x_map = x_map.view(cols * rows, -1)
+        y_map = y_map.view(cols * rows, -1)
+
+        # reshape the conv_out to [N*C,H*W]
+        feature_pts = conv_out.view(-1, cols * rows)  # [B*T*fp,13*12]
+
+        feature_af_softmax = self.softmax(
+            feature_pts
+        )  # output = [T*B*fp,64] [B*T*fp,13*12]
+
+        fp_x = torch.sum(
+            torch.matmul(feature_af_softmax, x_map), dim=1, keepdim=True
+        )  # [num_fp * T*B,1]
+        fp_y = torch.sum(
+            torch.matmul(feature_af_softmax, y_map), dim=1, keepdim=True
+        )  # [num_fp * T*B,1]
+
+        # get output flat features
+        conv_out_features = torch.cat((fp_x, fp_y), dim=1).view(
+            -1, fp * 2
+        )  # #[ T*B, 2 * num_fp]=[B*T,128]
+
+        return conv_out_features  # the expected 2d position
+
+    def forward(self, x):
+        x = self.forward_conv(x)
+        print(x.shape)
+        return x
 
 
 def main(argv):
-    # set device
-    device = torch.device(
-        'cuda' if FLAGS.cuda and torch.cuda.is_available() else 'cpu'
-    )
-
     im_width = FLAGS.im_width
     im_height = FLAGS.im_height
     num_channels = FLAGS.num_channels
@@ -200,7 +263,6 @@ def main(argv):
     data = torch.rand([num_channels, im_height, im_width])
     model = Daml(7, 7, im_height * im_width)
     print(model)
-    model.cuda()
     torchsummary.summary(model, data.shape)
 
 
