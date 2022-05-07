@@ -5,6 +5,7 @@ from absl import app, flags
 
 import mdn
 from saptial_softmax import SpatialSoftmax
+from utils import Timer
 
 FLAGS = flags.FLAGS
 
@@ -43,9 +44,9 @@ flags.DEFINE_bool('conv_bt', True,
 flags.DEFINE_integer('eept_dim', 3,
                      'dimension of end-effector position')
 # 1D Temporal Convs
-flags.DEFINE_list('num_temporal_filters', [10, 30, 30],
+flags.DEFINE_list('num_temp_filters', [10, 30, 30],
                   'number of filters for temporal convolution for ee pose prediction')
-flags.DEFINE_integer('temporal_filter_size', 10,
+flags.DEFINE_integer('temp_filter_size', 10,
                      'filter size for temporal convolution -- 10x1 for p&p')
 # full-connected layers
 flags.DEFINE_integer('num_fc_layers', 4,
@@ -66,9 +67,10 @@ class Daml(nn.Module):
         self.device = torch.device(
             'cuda' if FLAGS.cuda and torch.cuda.is_available() else 'cpu'
         )  # set device
-        self.construct_model()
-        self.init_weights()
-        self.to(self.device)
+        with Timer('contruct DAML model'):
+            self.construct_model()
+            self.init_weights()
+            self.to(self.device)
 
     def construct_model(self):
         num_filters = FLAGS.num_filters
@@ -173,17 +175,49 @@ class Daml(nn.Module):
             nn.Linear(fc_layer_size, 1),
             nn.Sigmoid(),
         )
+        ###### Temporal Convs ######
+
+        def _construct(in_channels):
+            num_temp_filters = list(map(int, FLAGS.num_temp_filters))
+            temp_filter_size = FLAGS.temp_filter_size
+            temp_convs = [
+                nn.Conv1d(in_channels, num_temp_filters[0], temp_filter_size,
+                          padding='same'),
+                nn.GroupNorm(1, num_temp_filters[0]),
+                nn.ReLU(),
+            ]
+            for i, num_filter in enumerate(num_temp_filters[1:]):
+                pre_num_filter = num_temp_filters[i]
+                temp_convs.extend([
+                    nn.Conv1d(pre_num_filter, num_filter, temp_filter_size,
+                              padding='same'),
+                    nn.GroupNorm(1, temp_filter_size),
+                    nn.ReLU(),
+                ])
+            temp_convs.append(
+                nn.Conv1d(num_temp_filters[-1], 1, 1, padding='same')
+            )
+            return nn.Sequential(*temp_convs)
+        # temp conv on predict pose
+        self.predict_temp_convs = _construct(self.predict_pose.out_features)
+        # temp conv on action
+        self.action_temp_convs = _construct(FLAGS.fc_layer_size)
 
     def init_weights(self):
         # FLAGS.initialization == 'xavier'. init weight and bias
-        # 2d convs
-        convs = [*self.rgb_conv.children()] + [*self.depth_conv.children()
-                                               ] + [*self.convs.children()]
-        for m in convs:
+        for m in [
+            # 2d convs
+            *self.rgb_conv.children(),
+            *self.depth_conv.children(),
+            *self.convs.children(),
+            # 1d convs (temp)
+            *self.predict_temp_convs.children(),
+            *self.action_temp_convs.children(),
+        ]:
             if isinstance(m, nn.Conv2d):
                 nn.init.xavier_uniform_(m.weight)
                 nn.init.zeros_(m.bias)
-            elif isinstance(m, nn.GroupNorm):
+            elif isinstance(m, nn.GroupNorm) or isinstance(m, nn.Conv1d):
                 nn.init.normal_(m.weight, std=0.01)
                 nn.init.zeros_(m.bias)
             elif isinstance(m, nn.ReLU):
@@ -205,7 +239,7 @@ class Daml(nn.Module):
                 raise Exception(
                     'module %s in fcs not initialized' % m._get_name())
         # action (MDN & discrete)
-        for m in [*self.mdn.children()] + [*self.discrete.children()]:
+        for m in [*self.mdn.children(), *self.discrete.children()]:
             if isinstance(m, nn.Linear):
                 nn.init.normal_(m.weight, std=0.01)
                 nn.init.zeros_(m.bias)
@@ -291,11 +325,10 @@ def main(argv):
     state_in = torch.rand([batch_size, state_size], device=device)
     action_gt = torch.rand([batch_size, action_size], device=device)
 
-    pi, sigma, mu, discrete = model.forward(rgb_in, depth_in, state_in)
-    sample = mdn.sample(pi, sigma, mu)
-    print(sample.shape)
-    action = model.sample_action(pi, sigma, mu, discrete, mdn_samples)
-    print(action.shape)
+    with Timer('forward once'):
+        pi, sigma, mu, discrete = model.forward(rgb_in, depth_in, state_in)
+        action = model.sample_action(pi, sigma, mu, discrete, mdn_samples)
+        print(action.shape)
 
 
 if __name__ == '__main__':
