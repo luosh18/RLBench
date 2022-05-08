@@ -98,7 +98,7 @@ class Daml(nn.Module):
         )) if FLAGS.conv_bt else None
         self.rgb_conv = nn.Sequential(
             nn.Conv2d(rgb_in, num_filters, filter_size,
-                      strides[0], padding='same' if strides[0] == 1 else 0),
+                      strides[0], padding='same' if strides[0] == 1 else strides[0]),
             nn.GroupNorm(1, num_filters),
             # each conv2d should followed by layer normalization
             # use Group Norm instead, according to:
@@ -117,7 +117,7 @@ class Daml(nn.Module):
         )) if FLAGS.conv_bt else None
         self.depth_conv = nn.Sequential(
             nn.Conv2d(depth_in, num_depth_filters, filter_size,
-                      strides[0], padding='same' if strides[0] == 1 else 0),
+                      strides[0], padding='same' if strides[0] == 1 else strides[0]),
             nn.GroupNorm(1, num_depth_filters),
             nn.ReLU(),
         )
@@ -125,14 +125,14 @@ class Daml(nn.Module):
         ##### other conv layers #####
         convs = [
             nn.Conv2d(num_filters + num_depth_filters, num_filters, filter_size,
-                      strides[1], padding='same' if strides[1] == 1 else 0),
+                      strides[1], padding='same' if strides[1] == 1 else strides[1]),
         ]
         for stride in strides[2:]:
             convs.extend([
                 nn.GroupNorm(1, num_filters),
                 nn.ReLU(),
                 nn.Conv2d(num_filters, num_filters, filter_size,
-                          stride, padding='same' if stride == 1 else 0),
+                          stride, padding='same' if stride == 1 else stride),
             ])
         self.convs = nn.Sequential(*convs)
 
@@ -199,7 +199,7 @@ class Daml(nn.Module):
             )
             return nn.Sequential(*temp_convs)
         # temp conv on predict pose
-        self.predict_temp_convs = _construct(self.predict_pose.out_features)
+        self.feature_temp_convs = _construct(self.num_feature_output)
         # temp conv on action
         self.action_temp_convs = _construct(FLAGS.fc_layer_size)
 
@@ -211,7 +211,7 @@ class Daml(nn.Module):
             *self.depth_conv.children(),
             *self.convs.children(),
             # 1d convs (temp)
-            *self.predict_temp_convs.children(),
+            *self.feature_temp_convs.children(),
             *self.action_temp_convs.children(),
         ]:
             if isinstance(m, nn.Conv2d):
