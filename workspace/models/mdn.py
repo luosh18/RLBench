@@ -1,22 +1,21 @@
 """A module for a mixture density network layer
-https://github.com/sagelywizard/pytorch-mdn
 For more info on MDNs, see _Mixture Desity Networks_ by Bishop, 1994.
 
-
+modified from https://github.com/sagelywizard/pytorch-mdn
+change to MetaModule
 https://blog.otoro.net/2015/11/24/mixture-density-networks-with-tensorflow/
 """
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.autograd import Variable
-from torch.distributions import Categorical
 import math
 
+import torch
+import torch.nn as nn
+from torch.distributions import Categorical
+from torchmeta.modules import MetaModule, MetaSequential, MetaLinear
 
 ONEOVERSQRT2PI = 1.0 / math.sqrt(2 * math.pi)
 
 
-class MDN(nn.Module):
+class MDN(MetaModule):
     """A mixture density network layer
 
     The input maps to the parameters of a MoG probability distribution, where
@@ -44,18 +43,19 @@ class MDN(nn.Module):
         self.in_features = in_features
         self.out_features = out_features
         self.num_gaussians = num_gaussians
-        self.pi = nn.Sequential(
-            nn.Linear(in_features, num_gaussians),
+        self.pi = MetaSequential(
+            MetaLinear(in_features, num_gaussians),
             nn.Softmax(dim=1)
         )
-        self.sigma = nn.Linear(in_features, out_features * num_gaussians)
-        self.mu = nn.Linear(in_features, out_features * num_gaussians)
+        self.sigma = MetaLinear(in_features, out_features * num_gaussians)
+        self.mu = MetaLinear(in_features, out_features * num_gaussians)
 
-    def forward(self, minibatch):
-        pi = self.pi(minibatch)
-        sigma = torch.exp(self.sigma(minibatch))
+    def forward(self, minibatch, params=None):
+        pi = self.pi(minibatch, params=self.get_subdict(params, 'pi'))
+        sigma = torch.exp(
+            self.sigma(minibatch, params=self.get_subdict(params, 'sigma')))
         sigma = sigma.view(-1, self.num_gaussians, self.out_features)
-        mu = self.mu(minibatch)
+        mu = self.mu(minibatch, params=self.get_subdict(params, 'mu'))
         mu = mu.view(-1, self.num_gaussians, self.out_features)
         return pi, sigma, mu
 

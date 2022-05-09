@@ -1,9 +1,17 @@
+from collections import OrderedDict
+from typing import List
+
 import torch
 import torch.nn as nn
 import torchsummary
 from absl import app, flags
+from torchmeta.modules import (MetaConv1d, MetaConv2d, MetaLinear, MetaModule,
+                               MetaSequential)
+from torchmeta.utils.gradient_based import gradient_update_parameters
 
 import mdn
+from meta_groupnorm import MetaGroupNorm
+from normalize import Normalize
 from saptial_softmax import SpatialSoftmax
 from utils import Timer
 
@@ -20,6 +28,8 @@ flags.DEFINE_integer('state_size', 7,
                      'dimension of robot state -- 7 for Jaco (include gripper)')
 flags.DEFINE_integer('action_size', 7,
                      'dimension of robot action -- 7 for Jaco (include gripper)')
+flags.DEFINE_integer('T', 50,
+                     'time horizon of the demo videos -- 50 for reach, 100 for push, 50 for DAML')
 flags.DEFINE_integer('mdn_samples', 100,
                      'sample "mdn_samples" actions from MDN and choose the one with highest probability')
 
@@ -27,8 +37,6 @@ flags.DEFINE_integer('mdn_samples', 100,
 flags.DEFINE_bool('cuda', True, 'using GPU, default true')
 
 ## Model Options ##
-# flags.DEFINE_string('initialization', 'xavier',
-#                     'initializer for conv weights. Choose among random, xavier, and he')
 # 2D Convs
 flags.DEFINE_list('strides', [2, 2, 2, 1, 1],
                   'list of 2d conv stride, len is num of conv layers -- p&p: [2, 2, 2, 1, 1]')
@@ -59,7 +67,7 @@ flags.DEFINE_integer('num_gaussian', 20,
                      'number of Gaussian kernels in MDN')
 
 
-class Daml(nn.Module):
+class Daml(MetaModule):
     def __init__(self) -> None:
         super().__init__()
         self.state_size = FLAGS.state_size
@@ -75,9 +83,6 @@ class Daml(nn.Module):
     def construct_model(self):
         num_filters = FLAGS.num_filters
         filter_size = FLAGS.filter_size
-
-        im_height = FLAGS.im_height
-        im_width = FLAGS.im_width
         num_channels = FLAGS.num_channels
 
         ###### 2d convolution layers ######
@@ -89,17 +94,10 @@ class Daml(nn.Module):
         ##### RGB first layer #####
         # input channel (plus bias transformation channel)
         rgb_in = num_channels * (2 if FLAGS.conv_bt else 1)
-        # init bias transformation, add to parameters and clip it to [0.0,1.0]
-        self.rgb_bt = nn.Parameter(torch.clamp(
-            torch.zeros(
-                [num_channels, im_height, im_width], requires_grad=True
-            ),
-            min=0.0, max=1.0,
-        )) if FLAGS.conv_bt else None
-        self.rgb_conv = nn.Sequential(
-            nn.Conv2d(rgb_in, num_filters, filter_size,
-                      strides[0], padding='same' if strides[0] == 1 else strides[0]),
-            nn.GroupNorm(1, num_filters),
+        self.rgb_conv = MetaSequential(
+            MetaConv2d(rgb_in, num_filters, filter_size,
+                       strides[0], padding='same' if strides[0] == 1 else strides[0]),
+            MetaGroupNorm(1, num_filters),
             # each conv2d should followed by layer normalization
             # use Group Norm instead, according to:
             # https://arxiv.org/pdf/1803.08494.pdf page:4 "3.1. Formulation" "Relation to Prior Work"
@@ -109,32 +107,26 @@ class Daml(nn.Module):
         ##### Depth first layer #####
         num_depth_filters = FLAGS.num_depth_filters
         depth_in = 2 if FLAGS.conv_bt else 1
-        self.depth_bt = nn.Parameter(torch.clamp(
-            torch.zeros(
-                [1, im_height, im_width], requires_grad=True
-            ),
-            min=0.0, max=1.0,
-        )) if FLAGS.conv_bt else None
-        self.depth_conv = nn.Sequential(
-            nn.Conv2d(depth_in, num_depth_filters, filter_size,
-                      strides[0], padding='same' if strides[0] == 1 else strides[0]),
-            nn.GroupNorm(1, num_depth_filters),
+        self.depth_conv = MetaSequential(
+            MetaConv2d(depth_in, num_depth_filters, filter_size,
+                       strides[0], padding='same' if strides[0] == 1 else strides[0]),
+            MetaGroupNorm(1, num_depth_filters),
             nn.ReLU(),
         )
 
         ##### other conv layers #####
         convs = [
-            nn.Conv2d(num_filters + num_depth_filters, num_filters, filter_size,
-                      strides[1], padding='same' if strides[1] == 1 else strides[1]),
+            MetaConv2d(num_filters + num_depth_filters, num_filters, filter_size,
+                       strides[1], padding='same' if strides[1] == 1 else strides[1]),
         ]
         for stride in strides[2:]:
             convs.extend([
-                nn.GroupNorm(1, num_filters),
+                MetaGroupNorm(1, num_filters),
                 nn.ReLU(),
-                nn.Conv2d(num_filters, num_filters, filter_size,
-                          stride, padding='same' if stride == 1 else stride),
+                MetaConv2d(num_filters, num_filters, filter_size,
+                           stride, padding='same' if stride == 1 else stride),
             ])
-        self.convs = nn.Sequential(*convs)
+        self.convs = MetaSequential(*convs)
 
         ###### Spatial Softmax after 2d conv ######
         self.spatial_softmax = SpatialSoftmax()
@@ -143,36 +135,31 @@ class Daml(nn.Module):
 
         ###### predict gipper pose ######
         # predict the pose of the gripper when it contacts the target object and/or container
-        self.predict_pose = nn.Linear(self.num_feature_output, FLAGS.eept_dim)
+        self.predict_pose = MetaLinear(self.num_feature_output, FLAGS.eept_dim)
 
         ###### fully-connected layers ######
         # input: cat: feature (spatial softmax), predicted_pose, robot state, bias transform
         fc_shape_in = self.num_feature_output + \
             FLAGS.eept_dim + self.state_size + FLAGS.bt_dim
-        # build weight for fc bias transformation
-        self.fc_bt = nn.Parameter(
-            torch.zeros(FLAGS.bt_dim, requires_grad=True)
-        ) if FLAGS.bt_dim > 0 else None
-
         n_fc_layer = FLAGS.num_fc_layers   # default 4 for p&p daml
         fc_layer_size = FLAGS.fc_layer_size  # default 50 for p&p daml
         fcs = [
-            nn.Linear(fc_shape_in, fc_layer_size),
+            MetaLinear(fc_shape_in, fc_layer_size),
         ]
         for _ in range(1, n_fc_layer):
             fcs.extend([
                 nn.ReLU(),
-                nn.Linear(fc_layer_size, fc_layer_size),
+                MetaLinear(fc_layer_size, fc_layer_size),
             ])
-        self.fcs = nn.Sequential(*fcs)
+        self.fcs = MetaSequential(*fcs)
 
         ###### Action ######
         # Mixture Density Networks for continuous action [:6] (joint velocity)
         self.mdn = mdn.MDN(
             fc_layer_size, self.action_size - 1, FLAGS.num_gaussian)
         # Linear with Sigmoid for discrete action [6:] (gripper open/close)
-        self.discrete = nn.Sequential(
-            nn.Linear(fc_layer_size, 1),
+        self.discrete = MetaSequential(
+            MetaLinear(fc_layer_size, 1),
             nn.Sigmoid(),
         )
         ###### Temporal Convs ######
@@ -181,30 +168,54 @@ class Daml(nn.Module):
             num_temp_filters = list(map(int, FLAGS.num_temp_filters))
             temp_filter_size = FLAGS.temp_filter_size
             temp_convs = [
-                nn.Conv1d(in_channels, num_temp_filters[0], temp_filter_size,
-                          padding='same'),
-                nn.GroupNorm(1, num_temp_filters[0]),
+                MetaConv1d(in_channels, num_temp_filters[0], temp_filter_size,
+                           padding='same'),
+                MetaGroupNorm(1, num_temp_filters[0]),
                 nn.ReLU(),
             ]
             for i, num_filter in enumerate(num_temp_filters[1:]):
                 pre_num_filter = num_temp_filters[i]
                 temp_convs.extend([
-                    nn.Conv1d(pre_num_filter, num_filter, temp_filter_size,
-                              padding='same'),
-                    nn.GroupNorm(1, temp_filter_size),
+                    MetaConv1d(pre_num_filter, num_filter, temp_filter_size,
+                               padding='same'),
+                    MetaGroupNorm(1, temp_filter_size),
                     nn.ReLU(),
                 ])
-            temp_convs.append(
-                nn.Conv1d(num_temp_filters[-1], 1, 1, padding='same')
-            )
-            return nn.Sequential(*temp_convs)
+            temp_convs.extend([
+                MetaConv1d(num_temp_filters[-1], 1, 1, padding='same'),
+                Normalize(),  # perform L2 norm after convs (adaptive loss)
+            ])
+            return MetaSequential(*temp_convs)
         # temp conv on predict pose
         self.feature_temp_convs = _construct(self.num_feature_output)
-        # temp conv on action
-        self.action_temp_convs = _construct(FLAGS.fc_layer_size)
+        # temp conv on fc layers
+        self.fc_temp_convs = _construct(FLAGS.fc_layer_size)
 
     def init_weights(self):
-        # FLAGS.initialization == 'xavier'. init weight and bias
+        im_height = FLAGS.im_height
+        im_width = FLAGS.im_width
+        num_channels = FLAGS.num_channels
+
+        ###### Bias Transformation (meta-param) ######
+        # init bias transformation, add to parameters and clip it to [0.0,1.0]
+        self.rgb_bt = nn.Parameter(torch.clamp(  # TODO: meta-params
+            torch.zeros(
+                [num_channels, im_height, im_width], requires_grad=True
+            ),
+            min=0.0, max=1.0,
+        )) if FLAGS.conv_bt else None
+        self.depth_bt = nn.Parameter(torch.clamp(  # TODO: meta-params
+            torch.zeros(
+                [1, im_height, im_width], requires_grad=True
+            ),
+            min=0.0, max=1.0,
+        )) if FLAGS.conv_bt else None
+        # build weight for fc bias transformation
+        self.fc_bt = nn.Parameter(torch.clamp(
+            torch.zeros(FLAGS.bt_dim, requires_grad=True),
+            min=0.0, max=1.0,
+        )) if FLAGS.bt_dim > 0 else None
+
         for m in [
             # 2d convs
             *self.rgb_conv.children(),
@@ -212,25 +223,26 @@ class Daml(nn.Module):
             *self.convs.children(),
             # 1d convs (temp)
             *self.feature_temp_convs.children(),
-            *self.action_temp_convs.children(),
+            *self.fc_temp_convs.children(),
         ]:
-            if isinstance(m, nn.Conv2d):
+            if isinstance(m, MetaConv2d):
                 nn.init.xavier_uniform_(m.weight)
                 nn.init.zeros_(m.bias)
-            elif isinstance(m, nn.GroupNorm) or isinstance(m, nn.Conv1d):
+            elif isinstance(m, MetaGroupNorm) or isinstance(m, MetaConv1d):
                 nn.init.normal_(m.weight, std=0.01)
                 nn.init.zeros_(m.bias)
-            elif isinstance(m, nn.ReLU):
+            elif isinstance(m, nn.ReLU) or isinstance(m, Normalize):
                 pass
             else:
                 raise Exception(
                     'module %s in convs not initialized' % m._get_name())
+        # spatial softmax has no params
         # predict pose
         nn.init.normal_(self.predict_pose.weight, std=0.01)
         nn.init.zeros_(self.predict_pose.bias)
         # fc
         for m in self.fcs.children():
-            if isinstance(m, nn.Linear):
+            if isinstance(m, MetaLinear):
                 nn.init.normal_(m.weight, std=0.01)
                 nn.init.zeros_(m.bias)
             elif isinstance(m, nn.ReLU):
@@ -239,53 +251,64 @@ class Daml(nn.Module):
                 raise Exception(
                     'module %s in fcs not initialized' % m._get_name())
         # action (MDN & discrete)
+        # TODO: MDN for action don't need to be meta-params ?
         for m in [*self.mdn.children(), *self.discrete.children()]:
-            if isinstance(m, nn.Linear):
+            if isinstance(m, MetaLinear):
                 nn.init.normal_(m.weight, std=0.01)
                 nn.init.zeros_(m.bias)
 
-    def forward_conv(self, rgb_in, depth_in) -> torch.Tensor:
+    def forward_conv(self, rgb_in, depth_in, params=None) -> torch.Tensor:
         # build bias transformation for conv2d
-        rgb_bt = torch.zeros_like(rgb_in, device=self.device) + self.rgb_bt
-        depth_bt = torch.zeros_like(
-            depth_in, device=self.device) + self.depth_bt
+        rgb_bt = torch.zeros_like(rgb_in, device=self.device)
+        rgb_bt += self.rgb_bt if params is None else params['rgb_bt']
+        depth_bt = torch.zeros_like(depth_in, device=self.device)
+        depth_bt += self.depth_bt if params is None else params['depth_bt']
         # concat image input and bias transformation
         rgb_in = torch.cat((rgb_in, rgb_bt), dim=1)
         depth_in = torch.cat((depth_in, depth_bt), dim=1)
         ###### CNN Forward ######
-        rgb_out = self.rgb_conv(rgb_in)
-        depth_out = self.depth_conv(depth_in)
+        rgb_out = self.rgb_conv(
+            rgb_in, params=self.get_subdict(params, 'rgb_conv'))
+        depth_out = self.depth_conv(
+            depth_in, params=self.get_subdict(params, 'depth_conv'))
         # concat rgb & d channel wise
         conv_in = torch.cat((rgb_out, depth_out), dim=1)
-        conv_out = self.convs(conv_in)
+        conv_out = self.convs(
+            conv_in, params=self.get_subdict(params, 'convs'))
         ###### Spatial Softmax ######
         conv_out_features = self.spatial_softmax(conv_out)
         return conv_out_features
 
-    def forward_predict_pose(self, conv_out) -> torch.Tensor:
+    def forward_predict_pose(self, conv_out, params=None) -> torch.Tensor:
         # outer meta-objective
         # predict the pose of the gripper when it contacts
         # the target object and/or container by linear (V. A.)
-        return self.predict_pose(conv_out)
+        return self.predict_pose(conv_out, self.get_subdict(params, 'predict_pose'))
 
-    def forward_fc(self, conv_out, predict_pose, state_in) -> torch.Tensor:
+    def forward_fc(self, conv_out, predict_pose, state_in=None, params=None) -> torch.Tensor:
+        if state_in is None:
+            state_in = torch.zeros(
+                (conv_out.shape[0], self.state_size), device=self.device)
         # feature (spatial softmax), predicted_pose, robot state, bias transform
         fc_bt = torch.zeros(
-            (conv_out.shape[0], *self.fc_bt.shape), device=self.device) + self.fc_bt
+            (conv_out.shape[0], *self.fc_bt.shape), device=self.device)
+        fc_bt += self.fc_bt if params is None else params['fc_bt']
         fc_in = torch.cat([conv_out, predict_pose, state_in, fc_bt], dim=1)
-        fc_out = self.fcs(fc_in)
+        fc_out = self.fcs(fc_in, self.get_subdict(params, 'fcs'))
         return fc_out
 
-    def forward_action(self, fc_out):  # MDN output
-        pi, sigma, mu = self.mdn(fc_out)
-        discrete = self.discrete(fc_out)
+    def forward_action(self, fc_out, params=None):  # MDN output
+        pi, sigma, mu = self.mdn(
+            fc_out, params=self.get_subdict(params, 'mdn'))
+        discrete = self.discrete(
+            fc_out, params=self.get_subdict(params, 'discrete'))
         return pi, sigma, mu, discrete
 
-    def forward(self, rgb_in, depth_in, state_in):
-        conv_out = self.forward_conv(rgb_in, depth_in)
-        predict_pose = self.forward_predict_pose(conv_out)
-        fc_out = self.forward_fc(conv_out, predict_pose, state_in)
-        pi, sigma, mu, discrete = self.forward_action(fc_out)
+    def forward(self, rgb_in, depth_in, state_in, params=None):
+        conv_out = self.forward_conv(rgb_in, depth_in, params)
+        predict_pose = self.forward_predict_pose(conv_out, params)
+        fc_out = self.forward_fc(conv_out, predict_pose, state_in, params)
+        pi, sigma, mu, discrete = self.forward_action(fc_out, params)
         return pi, sigma, mu, discrete
 
     def sample_action(self, pi, sigma, mu, discrete, num_samples: int):
@@ -325,8 +348,20 @@ def main(argv):
     state_in = torch.rand([batch_size, state_size], device=device)
     action_gt = torch.rand([batch_size, action_size], device=device)
 
+    params = OrderedDict(model.meta_named_parameters())
+    for name, param in params.items():
+        print(name, param.shape)
+
+    print("--------")
+    for name, param in model.get_subdict(params, 'convs').items():
+        print(name, param.shape)
+
+    print("---------")
+    print(params['rgb_bt'].shape)
+
     with Timer('forward once'):
-        pi, sigma, mu, discrete = model.forward(rgb_in, depth_in, state_in)
+        pi, sigma, mu, discrete = model.forward(
+            rgb_in, depth_in, state_in, params)
         action = model.sample_action(pi, sigma, mu, discrete, mdn_samples)
         print(action.shape)
 
