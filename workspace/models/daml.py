@@ -11,9 +11,9 @@ from torchmeta.utils.gradient_based import gradient_update_parameters
 
 import mdn
 from meta_groupnorm import MetaGroupNorm
-from normalize import Normalize
 from saptial_softmax import SpatialSoftmax
 from utils import Timer
+from vector_norm import VectorNorm
 
 FLAGS = flags.FLAGS
 
@@ -178,12 +178,12 @@ class Daml(MetaModule):
                 temp_convs.extend([
                     MetaConv1d(pre_num_filter, num_filter, temp_filter_size,
                                padding='same'),
-                    MetaGroupNorm(1, temp_filter_size),
+                    MetaGroupNorm(1, num_filter),
                     nn.ReLU(),
                 ])
             temp_convs.extend([
                 MetaConv1d(num_temp_filters[-1], 1, 1, padding='same'),
-                Normalize(),  # perform L2 norm after convs (adaptive loss)
+                VectorNorm(),  # perform L2 vector norm after convs (adaptive loss)
             ])
             return MetaSequential(*temp_convs)
         # temp conv on predict pose
@@ -231,7 +231,7 @@ class Daml(MetaModule):
             elif isinstance(m, MetaGroupNorm) or isinstance(m, MetaConv1d):
                 nn.init.normal_(m.weight, std=0.01)
                 nn.init.zeros_(m.bias)
-            elif isinstance(m, nn.ReLU) or isinstance(m, Normalize):
+            elif isinstance(m, nn.ReLU) or isinstance(m, VectorNorm):
                 pass
             else:
                 raise Exception(
@@ -312,7 +312,6 @@ class Daml(MetaModule):
         return pi, sigma, mu, discrete
 
     def sample_action(self, pi, sigma, mu, discrete, num_samples: int):
-        batch_size = pi.shape[0]  # B
         targets = [
             mdn.sample(pi, sigma, mu) for _ in range(num_samples)
         ]  # S, B, O
@@ -328,12 +327,40 @@ class Daml(MetaModule):
         ], dim=0)  # B, O
         return torch.cat((target_maxs, discrete), dim=1)  # B, O+1
 
+    def adaptive_loss(self, rgb: List[torch.Tensor], depth: List[torch.Tensor], params=None):
+        """inner gradient update (video only)
+        input: rgb: T[B, C, H, W] & depth: T[B, 1, H, W];
+        T is the length of demo (sampled)
+        """
+        # get feature points & fc output for each frame
+        fps = [self.forward_conv(rgb_in, depth_in, params=params)
+               for rgb_in, depth_in in zip(rgb, depth)]  # T[B, fp]
+        fcs = [self.forward_fc(conv_out, self.forward_predict_pose(conv_out, params), params=params)
+               for conv_out in fps]  # T[B, fc]
+        # cat output over frames
+        fps = torch.cat([fp.unsqueeze(2) for fp in fps], dim=2)  # B, fp, T
+        fcs = torch.cat([fc.unsqueeze(2) for fc in fcs], dim=2)  # B, fc, T
+        # temp conv (adaptive loss)
+        fps = self.feature_temp_convs(
+            fps, params=self.get_subdict(params, 'feature_temp_convs'))  # B
+        fcs = self.fc_temp_convs(
+            fcs, params=self.get_subdict(params, 'fc_temp_convs'))  # B
+        return fps + fcs  # return sum of adaptive loss on features & fc layers
 
-def main(argv):
-    model = Daml()
+
+def test_params(model: Daml):
+    params = OrderedDict(model.meta_named_parameters())
+    for name, param in params.items():
+        print(name, param.shape)
+    print("--------")
+    for name, param in model.get_subdict(params, 'convs').items():
+        print(name, param.shape)
+    print("---------")
+    print(params['rgb_bt'].shape)
+
+
+def test_forward(model):
     device = model.device
-    print(model)
-
     batch_size = 4
     im_width = FLAGS.im_width
     im_height = FLAGS.im_height
@@ -346,24 +373,43 @@ def main(argv):
         [batch_size, num_channels, im_height, im_width], device=device)
     depth_in = torch.rand([batch_size, 1, im_height, im_width], device=device)
     state_in = torch.rand([batch_size, state_size], device=device)
-    action_gt = torch.rand([batch_size, action_size], device=device)
 
     params = OrderedDict(model.meta_named_parameters())
-    for name, param in params.items():
-        print(name, param.shape)
-
-    print("--------")
-    for name, param in model.get_subdict(params, 'convs').items():
-        print(name, param.shape)
-
-    print("---------")
-    print(params['rgb_bt'].shape)
 
     with Timer('forward once'):
         pi, sigma, mu, discrete = model.forward(
             rgb_in, depth_in, state_in, params)
         action = model.sample_action(pi, sigma, mu, discrete, mdn_samples)
         print(action.shape)
+
+
+def test_adapt(model: Daml):
+    device = model.device
+    batch_size = 4
+    im_width = FLAGS.im_width
+    im_height = FLAGS.im_height
+    num_channels = FLAGS.num_channels
+    state_size = FLAGS.state_size
+    action_size = FLAGS.action_size
+    T = FLAGS.T
+
+    rgb_in = [torch.rand([batch_size, num_channels, im_height, im_width], device=device)
+              for _ in range(T)]
+    depth_in = [torch.rand([batch_size, 1, im_height, im_width], device=device)
+                for _ in range(T)]
+    state_in = [torch.rand([batch_size, state_size], device=device)
+                for _ in range(T)]
+    action_gt = [torch.rand([batch_size, action_size], device=device)
+                 for _ in range(T)]
+
+    params = OrderedDict(model.meta_named_parameters())
+    model.adaptive_loss(rgb_in, depth_in, params)
+
+
+def main(argv):
+    model = Daml()
+    # print(model)
+    test_adapt(model)
 
 
 if __name__ == '__main__':
