@@ -89,7 +89,8 @@ def mdn_loss(pi, sigma, mu, target):
     """
     prob = pi * gaussian_probability(sigma, mu, target)
     nll = -torch.log(torch.sum(prob, dim=1))
-    return torch.mean(nll)
+    # change form mean to sum (batch size = time interval in DAML)
+    return torch.sum(nll)
 
 
 def sample(pi, sigma, mu):

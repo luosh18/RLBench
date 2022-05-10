@@ -38,6 +38,10 @@ flags.DEFINE_float('adapt_lr', '0.005',
 
 # Training Options
 flags.DEFINE_bool('cuda', True, 'using GPU, default true')
+flags.DEFINE_integer('meta_batch_size', 3,
+                     'number of tasks sampled per meta-update -- 4 for p&p')
+flags.DEFINE_float('inner_clip', 30.0,
+                   'inner gradient clipping  -- [-30, 30] for p&p')
 
 ## Model Options ##
 # 2D Convs
@@ -75,6 +79,7 @@ class Daml(MetaModule):
         super().__init__()
         self.state_size = FLAGS.state_size
         self.action_size = FLAGS.action_size
+        self.inner_clip = FLAGS.inner_clip
         self.device = torch.device(
             'cuda' if FLAGS.cuda and torch.cuda.is_available() else 'cpu'
         )  # set device
@@ -265,7 +270,7 @@ class Daml(MetaModule):
             'fcs',
         ]
 
-    def forward_conv(self, rgb_in, depth_in, params=None) -> torch.Tensor:
+    def forward_conv(self, rgb_in, depth_in, params) -> torch.Tensor:
         # build bias transformation for conv2d
         rgb_bt = torch.zeros_like(rgb_in, device=self.device)
         rgb_bt += self.rgb_bt if params is None else params['rgb_bt']
@@ -287,13 +292,13 @@ class Daml(MetaModule):
         conv_out_features = self.spatial_softmax(conv_out)
         return conv_out_features
 
-    def forward_predict_pose(self, conv_out, params=None) -> torch.Tensor:
+    def forward_predict_pose(self, conv_out, params) -> torch.Tensor:
         # outer meta-objective
         # predict the pose of the gripper when it contacts
         # the target object and/or container by linear (V. A.)
         return self.predict_pose(conv_out, self.get_subdict(params, 'predict_pose'))
 
-    def forward_fc(self, conv_out, predict_pose, state_in=None, params=None) -> torch.Tensor:
+    def forward_fc(self, conv_out, predict_pose, state_in, params) -> torch.Tensor:
         if state_in is None:
             state_in = torch.zeros(
                 (conv_out.shape[0], self.state_size), device=self.device)
@@ -305,14 +310,14 @@ class Daml(MetaModule):
         fc_out = self.fcs(fc_in, self.get_subdict(params, 'fcs'))
         return fc_out
 
-    def forward_action(self, fc_out, params=None):  # MDN output
+    def forward_action(self, fc_out, params):  # MDN output
         pi, sigma, mu = self.mdn(
             fc_out, params=self.get_subdict(params, 'mdn'))
         discrete = self.discrete(
             fc_out, params=self.get_subdict(params, 'discrete'))
         return pi, sigma, mu, discrete
 
-    def forward(self, rgb_in, depth_in, state_in, params=None):
+    def forward(self, rgb_in, depth_in, state_in, params):
         conv_out = self.forward_conv(rgb_in, depth_in, params)
         predict_pose = self.forward_predict_pose(conv_out, params)
         fc_out = self.forward_fc(conv_out, predict_pose, state_in, params)
@@ -335,72 +340,80 @@ class Daml(MetaModule):
         ], dim=0)  # B, O
         return torch.cat((target_maxs, discrete), dim=1)  # B, O+1
 
-    def adapt_loss(self, rgb: List[torch.Tensor], depth: List[torch.Tensor], params=None) -> torch.Tensor:
-        """loss for inner gradient update (video only)
-        input: rgb: T[B, C, H, W] & depth: T[B, 1, H, W];
+    def _adapt_loss(self, rgb: torch.Tensor, depth: torch.Tensor, batch_params: List[OrderedDict]) -> torch.Tensor:
+        """loss for inner gradient update (video only) (private function)"""
+        # get feature points & fc output
+        fps = [self.forward_conv(rgb_in, depth_in, params)
+               for rgb_in, depth_in, params in zip(rgb, depth, batch_params)]  # B[T, fp]
+        fcs = [self.forward_fc(conv_out, self.forward_predict_pose(conv_out, params), None, params)
+               for conv_out, params in zip(fps, batch_params)]  # B[T, fc]
+        # reshape
+        fps = [fp.t().unsqueeze(0) for fp in fps]  # B[1, fp, T]
+        fcs = [fc.t().unsqueeze(0) for fc in fcs]  # B[1, fc, T]
+        # temp conv (adaptive loss)
+        loss = [
+            self.feature_temp_convs(
+                fp, params=self.get_subdict(params, 'feature_temp_convs')
+            ) + self.fc_temp_convs(
+                fc, params=self.get_subdict(params, 'fc_temp_convs')
+            )
+            for fp, fc, params in zip(fps, fcs, batch_params)
+        ]  # B[1]
+        return loss
+
+    def adapt(self, rgb: torch.Tensor, depth: torch.Tensor, params: OrderedDict, step_size=0.05) -> List[OrderedDict]:
+        """perform adaptive gradient update once for each task in batch
+        rgb: [B, T, C, H, W]; depth: [B, T, 1, H, W];
         T is the length of demo (sampled)
         """
-        # get feature points & fc output for each frame
-        fps = [self.forward_conv(rgb_in, depth_in, params=params)
-               for rgb_in, depth_in in zip(rgb, depth)]  # T[B, fp]
-        fcs = [self.forward_fc(conv_out, self.forward_predict_pose(conv_out, params), params=params)
-               for conv_out in fps]  # T[B, fc]
-        # cat output over frames
-        fps = torch.cat([fp.unsqueeze(2) for fp in fps], dim=2)  # B, fp, T
-        fcs = torch.cat([fc.unsqueeze(2) for fc in fcs], dim=2)  # B, fc, T
-        # temp conv (adaptive loss)
-        fps = self.feature_temp_convs(
-            fps, params=self.get_subdict(params, 'feature_temp_convs'))  # B
-        fcs = self.fc_temp_convs(
-            fcs, params=self.get_subdict(params, 'fc_temp_convs'))  # B
-        # return sum of adaptive loss on features & fc layers. mean across batch
-        return torch.mean(fps + fcs)
+        batch_params = [
+            OrderedDict([
+                (name, p.clone()) for name, p in params.items()
+            ]) for _ in range(rgb.shape[0])
+        ]  # clone param B times -> B[]
+        # get adaptive loss for each task in batch
+        adapt_loss = self._adapt_loss(rgb, depth, batch_params)
+        # gradient update each params
+        batch_updated_params = []
+        for loss, params in zip(adapt_loss, batch_params):
+            params_to_update = OrderedDict([
+                (name, params[name])
+                for name in params if name.split('.', 1)[0] in self.adapt_prefixes
+            ])
+            grads = torch.autograd.grad(loss, params_to_update.values(),
+                                        create_graph=True)
+            updated_params = OrderedDict(params.items())
+            for (name, param), grad in zip(params_to_update.items(), grads):
+                updated_params[name] = param - \
+                    step_size * grad.clip(-self.inner_clip, self.inner_clip)
+            batch_updated_params.append(updated_params)
+        return batch_updated_params
 
-    def adapt(self, rgb: List[torch.Tensor], depth: List[torch.Tensor], params=None, step_size=0.05) -> OrderedDict:
-        """perform adaptive gradient update once"""
-        if params is None:
-            params = OrderedDict(self.meta_named_parameters())
-
-        loss = self.adapt_loss(rgb, depth, params)
-        params_to_update = OrderedDict([
-            (name, params[name])
-            for name in params
-            if name.split('.', 1)[0] in self.adapt_prefixes
-        ])
-        grads = torch.autograd.grad(loss, params_to_update.values(),
-                                    create_graph=True)
-
-        updated_params = OrderedDict(params.items())
-        for (name, param), grad in zip(params_to_update.items(), grads):
-            updated_params[name] = param - step_size * grad
-
-        return updated_params
-
-    def meta_loss(self, rgb: List[torch.Tensor], depth: List[torch.Tensor], state: List[torch.Tensor],
-                  target: List[torch.Tensor], params=None):
-        if params is None:
-            params = OrderedDict(self.meta_named_parameters())
-        # prepare target for continuos & discrete actions
-        continuous_target = []  # T[B, action_size - 1]
-        discrete_target = []  # T[B, 1]
-        for t in target:
-            ct, dt = torch.split(t, [self.action_size - 1, 1], dim=1)
-            continuous_target.append(ct)
-            discrete_target.append(dt)
+    def meta_loss(self, rgb: torch.Tensor, depth: torch.Tensor, state: torch.Tensor,
+                  target: torch.Tensor, batch_params: List[OrderedDict]) -> torch.Tensor:
+        """loss for meta gradient update (across batch)
+        rgb: [B, T, C, H, W]; depth: [B, T, 1, H, W]; state: [B, T, state_size];
+        target: [B, T, action_size];
+        """
+        # prepare target for continuos [B, T, action_size - 1] & discrete actions [B, T, 1]
+        continuous_tg, discrete_tg = target.split([self.action_size - 1, 1], 2)
         outs = [
             self.forward(rgb_in, depth_in, state_in, params)
-            for rgb_in, depth_in, state_in in zip(rgb, depth, state)
-        ]  # T[Tuple(pi, sigma, mu, discrete)]
-        mdn_loss = torch.sum(torch.stack([  # sum across time
-            mdn.mdn_loss(pi, sigma, mu, ct)
-            for (pi, sigma, mu, _), ct in zip(outs, continuous_target)
-        ]))  # B
-        bce_loss = torch.sum(torch.stack([  # sum across time
-            F.binary_cross_entropy(discrete, dt)
-            for (_, _, _, discrete), dt in zip(outs, discrete_target)
-        ]))  # B
-        # return sum of continuous action loss & discrete action loss. mean across batch
-        return torch.mean(mdn_loss + bce_loss)
+            for rgb_in, depth_in, state_in, params in zip(rgb, depth, state, batch_params)
+        ]  # B[Tuple(pi, sigma, mu, discrete)]
+        mdn_loss = torch.mean(torch.stack([  # mean across batch
+            mdn.mdn_loss(pi, sigma, mu, ct)  # sum across time
+            for (pi, sigma, mu, _), ct in zip(outs, continuous_tg)
+        ]))
+        print('mdn_loss:', mdn_loss)
+        bce_loss = torch.mean(torch.stack([  # mean across batch
+            F.binary_cross_entropy(
+                discrete, dt, reduction='sum')  # sum across time
+            for (_, _, _, discrete), dt in zip(outs, discrete_tg)
+        ]))
+        print('bce_loss:', bce_loss)
+        # return sum of continuous action loss & discrete action loss.
+        return mdn_loss + bce_loss
 
 
 def test_params(model: Daml):
@@ -416,7 +429,7 @@ def test_params(model: Daml):
 
 def test_forward(model):
     device = model.device
-    batch_size = 4
+    batch_size = FLAGS.meta_batch_size
     im_width = FLAGS.im_width
     im_height = FLAGS.im_height
     num_channels = FLAGS.num_channels
@@ -440,7 +453,7 @@ def test_forward(model):
 
 def test_adapt_meta(model: Daml):
     device = model.device
-    batch_size = 4
+    batch_size = FLAGS.meta_batch_size
     im_width = FLAGS.im_width
     im_height = FLAGS.im_height
     num_channels = FLAGS.num_channels
@@ -448,42 +461,40 @@ def test_adapt_meta(model: Daml):
     action_size = FLAGS.action_size
     T = FLAGS.T
 
-    rgb = [torch.rand([batch_size, num_channels, im_height, im_width], device=device)
-           for _ in range(T)]
-    depth = [torch.rand([batch_size, 1, im_height, im_width], device=device)
-             for _ in range(T)]
-    state = [torch.rand([batch_size, state_size], device=device)
-             for _ in range(T)]
-    target = [torch.rand([batch_size, action_size], device=device)
-              for _ in range(T)]
-    pre_update = OrderedDict(model.meta_named_parameters())
+    rgb = torch.rand([batch_size, T, num_channels, im_height, im_width],
+                     device=device)
+    depth = torch.rand([batch_size, T, 1, im_height, im_width], device=device)
+    state = torch.rand([batch_size, T, state_size], device=device)
+    target = torch.rand([batch_size, T, action_size], device=device)
 
+    pre_update = OrderedDict(model.meta_named_parameters())
     meta_optimizer = torch.optim.Adam(model.parameters())
     model.zero_grad()
 
-    # adapt (update)
-    print('----- start adapt -----')
-    post_update = model.adapt(rgb, depth, pre_update, FLAGS.adapt_lr)
-    assert len(pre_update) == len(post_update)
-    for name in pre_update:
-        if not torch.equal(pre_update[name], post_update[name]):
-            print(name)
+    # adapt (get post-update params)
+    print('----- adapt -----')
+    batch_post_update = model.adapt(rgb, depth, pre_update, FLAGS.adapt_lr)
+    print('batch_post_update: len=', len(batch_post_update))
+    for post_update in batch_post_update:
+        for name in pre_update:
+            if not torch.equal(pre_update[name], post_update[name]):
+                print(name, pre_update[name].sum(), post_update[name].sum())
+                break
 
     # meta
     print('----- start meta -----')
-    outer_loss = model.meta_loss(rgb, depth, state, target, post_update)
-    print('outer_loss:', outer_loss)
-    outer_loss.backward()
-    for p in model.parameters():
+    meta_loss = model.meta_loss(rgb, depth, state, target, batch_post_update)
+    print('outer_loss:', meta_loss)
+    meta_loss.backward()
+    for name, p in model.named_parameters():
         if (p.requires_grad):
-            print(p.flatten()[0], p.grad.norm())
+            print(name, p.flatten()[0], p.grad.norm())
             break
     meta_optimizer.step()
-    for p in model.parameters():
+    for name, p in model.named_parameters():
         if (p.requires_grad):
-            print(p.flatten()[0], p.grad.norm())
+            print(name, p.flatten()[0], p.grad.norm())
             break
-    
 
 
 def main(argv):
