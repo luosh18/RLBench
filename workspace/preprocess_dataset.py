@@ -127,8 +127,7 @@ def main(argv):
     env.launch()
 
     task_env = env.get_task(PickAndPlace)
-    # var_target = task_env.variation_count()
-    var_target = 2
+    var_target = task_env.variation_count()
 
     for v in range(var_target):
         task_env.set_variation(v)
@@ -145,7 +144,7 @@ def main(argv):
             pickle.dump(descriptions, f)
 
         # load all demonstration
-        demos = task_env.get_demos(2, live_demos, random_selection=False)
+        demos = task_env.get_demos(-1, live_demos, random_selection=False)
         print('variation: %d has %d demos' % (v, len(demos)))
         for i, demo in enumerate(demos):  # for each demo
             parsed = process_demo(demo)
