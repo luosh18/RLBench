@@ -25,8 +25,8 @@ flags.DEFINE_integer('im_height', 128,
                      'height of the images in the demo videos -- 125 for sim_push, 128 to suit RLBench')
 flags.DEFINE_integer('num_channels', 3,
                      'number of channels of the images in the demo videos')
-flags.DEFINE_integer('state_size', 7,
-                     'dimension of robot state -- 7 for Jaco (include gripper)')
+flags.DEFINE_integer('state_size', 10,
+                     'dimension of robot state -- 10 for Jaco (include gripper & tip position)')
 flags.DEFINE_integer('action_size', 7,
                      'dimension of robot action -- 7 for Jaco (include gripper)')
 flags.DEFINE_integer('T', 50,
@@ -72,6 +72,14 @@ flags.DEFINE_integer('bt_dim', 20,
                      'the dimension of bias transformation for FC layers -- 20 for all exp')
 flags.DEFINE_integer('num_gaussian', 20,
                      'number of Gaussian kernels in MDN')
+
+""" note for input, output, target
+rgb:        (3, 128, 128)
+depth:      (1, 128, 128)
+state:      (10)
+action:     (7)
+predict:    (3)
+"""
 
 
 class Daml(MetaModule):
