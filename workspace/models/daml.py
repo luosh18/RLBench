@@ -8,11 +8,11 @@ from absl import app, flags
 from torchmeta.modules import (MetaConv1d, MetaConv2d, MetaLinear, MetaModule,
                                MetaSequential)
 
-import mdn
-from meta_groupnorm import MetaGroupNorm
-from saptial_softmax import SpatialSoftmax
-from utils import Timer
-from vector_norm import VectorNorm
+import workspace.models.mdn as mdn
+from workspace.models.meta_groupnorm import MetaGroupNorm
+from workspace.models.saptial_softmax import SpatialSoftmax
+from workspace.models.utils import Timer
+from workspace.models.vector_norm import VectorNorm
 
 FLAGS = flags.FLAGS
 
