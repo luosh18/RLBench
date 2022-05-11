@@ -4,11 +4,9 @@ from typing import List
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchsummary
 from absl import app, flags
 from torchmeta.modules import (MetaConv1d, MetaConv2d, MetaLinear, MetaModule,
                                MetaSequential)
-from torchmeta.utils.gradient_based import gradient_update_parameters
 
 import mdn
 from meta_groupnorm import MetaGroupNorm
@@ -505,11 +503,34 @@ def test_adapt_meta(model: Daml):
             break
 
 
+def test_save_load(model: Daml, optim: torch.optim.Optimizer):
+    # save model
+    state_dict = model.state_dict()
+    torch.save(model.state_dict(), 'state_dict.pt')
+    model.load_state_dict(torch.load('state_dict.pt'))
+    for k in state_dict:
+        if not torch.equal(state_dict[k], model.get_parameter(k)):
+            print(k)
+    # save meta_named_parameters (backup)
+    torch.save(OrderedDict(model.meta_named_parameters()), 'meta_named.pt')
+    model.load_state_dict(torch.load('meta_named.pt'))
+    for k in state_dict:
+        if not torch.equal(state_dict[k], model.get_parameter(k)):
+            print(k)
+    # save optimizer
+    optim_state = optim.state_dict()
+    torch.save(optim.state_dict(), 'optim.pt')
+    optim.load_state_dict(torch.load('optim.pt'))
+    if not str(optim_state) == str(optim.state_dict()):
+        print(False)
+
+
 def main(argv):
     model = Daml()
     print(model)
     # test_params(model)
-    test_adapt_meta(model)
+    # test_adapt_meta(model)
+    test_save_load(model, torch.optim.Adam(model.parameters()))
 
 
 if __name__ == '__main__':

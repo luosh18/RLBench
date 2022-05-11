@@ -4,7 +4,20 @@ from os.path import exists, join
 from typing import Tuple
 
 import numpy as np
+import torch
 from rlbench.backend.const import *
+
+
+class BatchTensor():
+    def __init__(self, demo, device=None) -> None:
+        self.rgb = torch.tensor(demo['rgb'], device=device)
+        self.depth = torch.tensor(demo['depth'], device=device)
+        self.state = torch.tensor(demo['state'], device=device)
+        self.action = torch.tensor(demo['action'], device=device)
+        self.predict = torch.tensor(demo['predict'], device=device)
+
+    def unpack(self):
+        return self.rgb, self.depth, self.state, self.action, self.predict
 
 
 class DatasetLoader():
@@ -137,4 +150,15 @@ if __name__ == '__main__':
         dataset_root, task_name, batch_size, frames, True)
     # batch_demo = dataloader.get_batch_sampled_demo(0)
     h_batch, r_batch = dataloader.get_batch_sampled_demo_pair(0)
-    h_batch, r_batch = dataloader.get_batch_sampled_demo_pair(125)
+    for k, v in h_batch.items():
+        print(k, v.shape)
+    for k, v in r_batch.items():
+        print(k, v.shape)
+    
+    device = torch.device(
+        'cuda' if torch.cuda.is_available() else 'cpu'
+    )  # set device
+    h_rgb, h_depth, h_state, h_action, h_predict = BatchTensor(h_batch, device).unpack()
+    r_rgb, r_depth, r_state, r_action, r_predict = BatchTensor(r_batch, device).unpack()
+    print(h_rgb.shape, h_depth.shape, h_state.shape, h_action.shape, h_predict.shape)
+    print(r_rgb.shape, r_depth.shape, r_state.shape, r_action.shape, r_predict.shape)
