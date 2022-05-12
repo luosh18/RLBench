@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from typing import List
+from typing import List, Tuple
 
 import torch
 import torch.nn as nn
@@ -11,7 +11,7 @@ from torchmeta.modules import (MetaConv1d, MetaConv2d, MetaLinear, MetaModule,
 import workspace.models.mdn as mdn
 from workspace.models.meta_groupnorm import MetaGroupNorm
 from workspace.models.saptial_softmax import SpatialSoftmax
-from workspace.models.utils import Timer
+from workspace.utils import Timer
 from workspace.models.vector_norm import VectorNorm
 
 FLAGS = flags.FLAGS
@@ -28,7 +28,7 @@ flags.DEFINE_integer('state_size', 10,
 flags.DEFINE_integer('action_size', 7,
                      'dimension of robot action -- 7 for Jaco (include gripper)')
 flags.DEFINE_integer('T', 50,
-                     'time horizon of the demo videos -- 50 for reach, 100 for push, 50 for DAML')
+                     'time horizon of the demo videos -- 50 for reach, 100 for push, DAML to be determined')
 flags.DEFINE_integer('mdn_samples', 100,
                      'sample "mdn_samples" actions from MDN and choose the one with highest probability')
 flags.DEFINE_float('adapt_lr', '0.005',
@@ -36,8 +36,10 @@ flags.DEFINE_float('adapt_lr', '0.005',
 
 # Training Options
 flags.DEFINE_bool('cuda', True, 'using GPU, default true')
-flags.DEFINE_integer('meta_batch_size', 3,
+flags.DEFINE_integer('meta_batch_size', 4,
                      'number of tasks sampled per meta-update -- 4 for p&p')
+flags.DEFINE_integer('num_updates', 5,
+                     'number of inner gradient updates during training -- 5 for p&p')
 flags.DEFINE_float('inner_clip', 30.0,
                    'inner gradient clipping  -- [-30, 30] for p&p')
 
@@ -54,8 +56,8 @@ flags.DEFINE_integer('num_depth_filters', 16,
 flags.DEFINE_bool('conv_bt', True,
                   'use bias transformation for the first conv layer, N/A for using pretraining')
 # Gripper Pose Prediction
-flags.DEFINE_integer('eept_dim', 3,
-                     'dimension of end-effector position')
+flags.DEFINE_integer('predict_size', 3,
+                     'dimension of end-effector position prediction (tip x,y,z)')
 # 1D Temporal Convs
 flags.DEFINE_list('num_temp_filters', [10, 30, 30],
                   'number of filters for temporal convolution for ee pose prediction')
@@ -149,12 +151,13 @@ class Daml(MetaModule):
 
         ###### predict gipper pose ######
         # predict the pose of the gripper when it contacts the target object and/or container
-        self.predict_pose = MetaLinear(self.num_feature_output, FLAGS.eept_dim)
+        self.predict_pose = MetaLinear(
+            self.num_feature_output, FLAGS.predict_size)
 
         ###### fully-connected layers ######
         # input: cat: feature (spatial softmax), predicted_pose, robot state, bias transform
         fc_shape_in = self.num_feature_output + \
-            FLAGS.eept_dim + self.state_size + FLAGS.bt_dim
+            FLAGS.predict_size + self.state_size + FLAGS.bt_dim
         n_fc_layer = FLAGS.num_fc_layers   # default 4 for p&p daml
         fc_layer_size = FLAGS.fc_layer_size  # default 50 for p&p daml
         fcs = [
@@ -316,7 +319,8 @@ class Daml(MetaModule):
         fc_out = self.fcs(fc_in, self.get_subdict(params, 'fcs'))
         return fc_out
 
-    def forward_action(self, fc_out, params):  # MDN output
+    def forward_action(self, fc_out, params) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """MDN cat with Linear gripper output"""
         pi, sigma, mu = self.mdn(
             fc_out, params=self.get_subdict(params, 'mdn'))
         discrete = self.discrete(
@@ -328,7 +332,7 @@ class Daml(MetaModule):
         predict_pose = self.forward_predict_pose(conv_out, params)
         fc_out = self.forward_fc(conv_out, predict_pose, state_in, params)
         pi, sigma, mu, discrete = self.forward_action(fc_out, params)
-        return pi, sigma, mu, discrete
+        return pi, sigma, mu, discrete, predict_pose
 
     def sample_action(self, pi, sigma, mu, discrete, num_samples: int):
         targets = [
@@ -367,59 +371,63 @@ class Daml(MetaModule):
         ]  # B[1]
         return loss
 
-    def adapt(self, rgb: torch.Tensor, depth: torch.Tensor, params: OrderedDict, step_size=0.05) -> List[OrderedDict]:
-        """perform adaptive gradient update once for each task in batch
+    def adapt(self, rgb: torch.Tensor, depth: torch.Tensor, params: OrderedDict,
+              step_size=0.05, updates=1) -> List[OrderedDict]:
+        """perform adaptive gradient update "updates" times for each task in batch
         rgb: [B, T, C, H, W]; depth: [B, T, 1, H, W];
         T is the length of demo (sampled)
         """
         batch_params = [
             OrderedDict([
-                (name, p.clone()) for name, p in params.items()
+                (name,
+                 p.clone() if name.split('.', 1)[0] in self.adapt_prefixes else p)  # reduce memory usage
+                for name, p in params.items()
             ]) for _ in range(rgb.shape[0])
-        ]  # clone param B times -> B[]
-        # get adaptive loss for each task in batch
-        adapt_loss = self._adapt_loss(rgb, depth, batch_params)
-        # gradient update each params
-        batch_updated_params = []
-        for loss, params in zip(adapt_loss, batch_params):
+        ]  # clone param for each task in batch -> B[params]
+
+        def update_params(loss, params):
             params_to_update = OrderedDict([
                 (name, params[name])
                 for name in params if name.split('.', 1)[0] in self.adapt_prefixes
             ])
             grads = torch.autograd.grad(loss, params_to_update.values(),
-                                        create_graph=True)
-            updated_params = OrderedDict(params.items())
+                                        create_graph=True)  # create_graph to allow higher order gradient
             for (name, param), grad in zip(params_to_update.items(), grads):
-                updated_params[name] = param - \
-                    step_size * grad.clip(-self.inner_clip, self.inner_clip)
-            batch_updated_params.append(updated_params)
-        return batch_updated_params
+                params[name] = param - step_size * \
+                    grad.clip(-self.inner_clip, self.inner_clip)
+            return params
+
+        for _ in range(updates):
+            adapt_loss = self._adapt_loss(rgb, depth, batch_params)
+            batch_params = [
+                update_params(loss, params)
+                for loss, params in zip(adapt_loss, batch_params)
+            ]
+
+        return batch_params
 
     def meta_loss(self, rgb: torch.Tensor, depth: torch.Tensor, state: torch.Tensor,
-                  target: torch.Tensor, batch_params: List[OrderedDict]) -> torch.Tensor:
+                  target: torch.Tensor, predict_target: torch.Tensor,
+                  batch_params: List[OrderedDict]) -> torch.Tensor:
         """loss for meta gradient update (across batch)
         rgb: [B, T, C, H, W]; depth: [B, T, 1, H, W]; state: [B, T, state_size];
-        target: [B, T, action_size];
+        target: [B, T, action_size]; predict_target: [B, T, predict_size];
         """
         # prepare target for continuos [B, T, action_size - 1] & discrete actions [B, T, 1]
         continuous_tg, discrete_tg = target.split([self.action_size - 1, 1], 2)
         outs = [
             self.forward(rgb_in, depth_in, state_in, params)
             for rgb_in, depth_in, state_in, params in zip(rgb, depth, state, batch_params)
-        ]  # B[Tuple(pi, sigma, mu, discrete)]
-        mdn_loss = torch.mean(torch.stack([  # mean across batch
-            mdn.mdn_loss(pi, sigma, mu, ct)  # sum across time
-            for (pi, sigma, mu, _), ct in zip(outs, continuous_tg)
-        ]))
-        print('mdn_loss:', mdn_loss)
-        bce_loss = torch.mean(torch.stack([  # mean across batch
-            F.binary_cross_entropy(
-                discrete, dt, reduction='sum')  # sum across time
-            for (_, _, _, discrete), dt in zip(outs, discrete_tg)
-        ]))
-        print('bce_loss:', bce_loss)
-        # return sum of continuous action loss & discrete action loss.
-        return mdn_loss + bce_loss
+        ]  # B[Tuple(pi, sigma, mu, discrete, predict_pose)]
+        loss = torch.stack([
+            # sum across time for each kind of loss
+            mdn.mdn_loss(pi, sigma, mu, ct) + \
+            F.binary_cross_entropy(discrete, dt, reduction='sum') + \
+            F.mse_loss(predict, pt, reduction='sum')
+            for (pi, sigma, mu, discrete, predict), ct, dt, pt
+            in zip(outs, continuous_tg, discrete_tg, predict_target)
+        ])  # B
+        return loss.mean()  # mean across batch
 
 
 def test_params(model: Daml):
@@ -465,6 +473,7 @@ def test_adapt_meta(model: Daml):
     num_channels = FLAGS.num_channels
     state_size = FLAGS.state_size
     action_size = FLAGS.action_size
+    predict_size = FLAGS.predict_size
     T = FLAGS.T
 
     rgb = torch.rand([batch_size, T, num_channels, im_height, im_width],
@@ -472,35 +481,54 @@ def test_adapt_meta(model: Daml):
     depth = torch.rand([batch_size, T, 1, im_height, im_width], device=device)
     state = torch.rand([batch_size, T, state_size], device=device)
     target = torch.rand([batch_size, T, action_size], device=device)
+    predict_target = torch.rand([batch_size, T, predict_size], device=device)
 
     pre_update = OrderedDict(model.meta_named_parameters())
     meta_optimizer = torch.optim.Adam(model.parameters())
     model.zero_grad()
+    for name, p in model.meta_named_parameters():
+        print(name)
 
     # adapt (get post-update params)
     print('----- adapt -----')
-    batch_post_update = model.adapt(rgb, depth, pre_update, FLAGS.adapt_lr)
+    batch_post_update = model.adapt(
+        rgb, depth, pre_update, FLAGS.adapt_lr, FLAGS.num_updates)
     print('batch_post_update: len=', len(batch_post_update))
-    for post_update in batch_post_update:
-        for name in pre_update:
+    for name in pre_update:
+        for post_update in batch_post_update:
             if not torch.equal(pre_update[name], post_update[name]):
-                print(name, pre_update[name].sum(), post_update[name].sum())
-                break
+                print(name, torch.linalg.norm(
+                    post_update[name] - pre_update[name]))
 
     # meta
     print('----- start meta -----')
-    meta_loss = model.meta_loss(rgb, depth, state, target, batch_post_update)
+    meta_loss = model.meta_loss(rgb, depth, state,
+                                target, predict_target,
+                                batch_post_update)
     print('outer_loss:', meta_loss)
     meta_loss.backward()
     for name, p in model.named_parameters():
-        if (p.requires_grad):
+        if ('temp' in name):
             print(name, p.flatten()[0], p.grad.norm())
-            break
+
     meta_optimizer.step()
     for name, p in model.named_parameters():
-        if (p.requires_grad):
+        if ('temp' in name):
             print(name, p.flatten()[0], p.grad.norm())
-            break
+
+    print('----- time for iterration -----')
+    with Timer('10 Iterration'):
+        for _ in range(10):
+            model.zero_grad()
+            pre_update = OrderedDict(model.meta_named_parameters())
+            meta_optimizer = torch.optim.Adam(model.parameters())
+            batch_post_update = model.adapt(
+                rgb, depth, pre_update, FLAGS.adapt_lr, FLAGS.num_updates)
+            meta_loss = model.meta_loss(rgb, depth, state,
+                                        target, predict_target,
+                                        batch_post_update)
+            meta_loss.backward()
+            meta_optimizer.step()
 
 
 def test_save_load(model: Daml, optim: torch.optim.Optimizer):
@@ -529,8 +557,8 @@ def main(argv):
     model = Daml()
     print(model)
     # test_params(model)
-    # test_adapt_meta(model)
-    test_save_load(model, torch.optim.Adam(model.parameters()))
+    test_adapt_meta(model)
+    # test_save_load(model, torch.optim.Adam(model.parameters()))
 
 
 if __name__ == '__main__':

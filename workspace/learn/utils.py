@@ -6,6 +6,7 @@ from typing import Tuple
 import numpy as np
 import torch
 from rlbench.backend.const import *
+from workspace.utils import Timer
 
 
 class BatchTensor():
@@ -140,6 +141,29 @@ class DatasetLoader():
         return h_batch_demo, r_batch_demo
 
 
+def test_loading_time(dataloader: DatasetLoader):
+    device = torch.device(
+        'cuda' if torch.cuda.is_available() else 'cpu'
+    )  # set device
+    ts = [np.random.random_integers(0, 75000) for _ in range(10)]
+    with Timer('load 10 iteration'):
+        for t in ts:
+            # batch_demo = dataloader.get_batch_sampled_demo(0)
+            h_batch, r_batch = dataloader.get_batch_sampled_demo_pair(t)
+            # for k, v in h_batch.items():
+            #     print(k, v.shape)
+            # for k, v in r_batch.items():
+            #     print(k, v.shape)
+            h_rgb, h_depth, h_state, h_action, h_predict = BatchTensor(
+                h_batch, device).unpack()
+            r_rgb, r_depth, r_state, r_action, r_predict = BatchTensor(
+                r_batch, device).unpack()
+    print(h_rgb.shape, h_depth.shape, h_state.shape,
+        h_action.shape, h_predict.shape)
+    print(r_rgb.shape, r_depth.shape, r_state.shape,
+        r_action.shape, r_predict.shape)
+
+
 if __name__ == '__main__':
     """testing"""
     dataset_root = join(os.path.expanduser('~'), 'disk/dataset')
@@ -148,17 +172,4 @@ if __name__ == '__main__':
     frames = 50
     dataloader = DatasetLoader(
         dataset_root, task_name, batch_size, frames, True)
-    # batch_demo = dataloader.get_batch_sampled_demo(0)
-    h_batch, r_batch = dataloader.get_batch_sampled_demo_pair(0)
-    for k, v in h_batch.items():
-        print(k, v.shape)
-    for k, v in r_batch.items():
-        print(k, v.shape)
-    
-    device = torch.device(
-        'cuda' if torch.cuda.is_available() else 'cpu'
-    )  # set device
-    h_rgb, h_depth, h_state, h_action, h_predict = BatchTensor(h_batch, device).unpack()
-    r_rgb, r_depth, r_state, r_action, r_predict = BatchTensor(r_batch, device).unpack()
-    print(h_rgb.shape, h_depth.shape, h_state.shape, h_action.shape, h_predict.shape)
-    print(r_rgb.shape, r_depth.shape, r_state.shape, r_action.shape, r_predict.shape)
+    test_loading_time(dataloader)
