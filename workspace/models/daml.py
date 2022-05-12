@@ -372,7 +372,7 @@ class Daml(MetaModule):
         return loss
 
     def adapt(self, rgb: torch.Tensor, depth: torch.Tensor, params: OrderedDict,
-              step_size=0.05, updates=1) -> List[OrderedDict]:
+              step_size=0.05, updates=1) -> Tuple[List[OrderedDict], List[torch.Tensor]]:
         """perform adaptive gradient update "updates" times for each task in batch
         rgb: [B, T, C, H, W]; depth: [B, T, 1, H, W];
         T is the length of demo (sampled)
@@ -397,18 +397,21 @@ class Daml(MetaModule):
                     grad.clip(-self.inner_clip, self.inner_clip)
             return params
 
+        adapt_losses = []
         for _ in range(updates):
             adapt_loss = self._adapt_loss(rgb, depth, batch_params)
+            # mean adapt loss across batch
+            adapt_losses.append(sum(adapt_loss) / len(adapt_loss))
             batch_params = [
                 update_params(loss, params)
                 for loss, params in zip(adapt_loss, batch_params)
             ]
 
-        return batch_params
+        return batch_params, adapt_losses  # mean adapt loss across batch for each update
 
     def meta_loss(self, rgb: torch.Tensor, depth: torch.Tensor, state: torch.Tensor,
                   target: torch.Tensor, predict_target: torch.Tensor,
-                  batch_params: List[OrderedDict]) -> torch.Tensor:
+                  batch_params: List[OrderedDict]) -> Tuple[torch.Tensor, torch.Tensor]:
         """loss for meta gradient update (across batch)
         rgb: [B, T, C, H, W]; depth: [B, T, 1, H, W]; state: [B, T, state_size];
         target: [B, T, action_size]; predict_target: [B, T, predict_size];
@@ -420,14 +423,16 @@ class Daml(MetaModule):
             for rgb_in, depth_in, state_in, params in zip(rgb, depth, state, batch_params)
         ]  # B[Tuple(pi, sigma, mu, discrete, predict_pose)]
         loss = torch.stack([
-            # sum across time for each kind of loss
-            mdn.mdn_loss(pi, sigma, mu, ct) + \
-            F.binary_cross_entropy(discrete, dt, reduction='sum') + \
-            F.mse_loss(predict, pt, reduction='sum')
+            torch.stack([  # sum across time
+                mdn.mdn_loss(pi, sigma, mu, ct),
+                F.binary_cross_entropy(discrete, dt, reduction='sum'),
+                F.mse_loss(predict, pt, reduction='sum'),
+            ])
             for (pi, sigma, mu, discrete, predict), ct, dt, pt
             in zip(outs, continuous_tg, discrete_tg, predict_target)
-        ])  # B
-        return loss.mean()  # mean across batch
+        ])  # B, 3
+        # mean across batch & sum across loss, mean loss for each kind of loss
+        return loss.sum(1).mean(), loss.mean(0)
 
 
 def test_params(model: Daml):
@@ -491,9 +496,10 @@ def test_adapt_meta(model: Daml):
 
     # adapt (get post-update params)
     print('----- adapt -----')
-    batch_post_update = model.adapt(
+    batch_post_update, adapt_losses = model.adapt(
         rgb, depth, pre_update, FLAGS.adapt_lr, FLAGS.num_updates)
     print('batch_post_update: len=', len(batch_post_update))
+    print('adapt_losses:', len(adapt_losses), adapt_losses)
     for name in pre_update:
         for post_update in batch_post_update:
             if not torch.equal(pre_update[name], post_update[name]):
@@ -502,10 +508,11 @@ def test_adapt_meta(model: Daml):
 
     # meta
     print('----- start meta -----')
-    meta_loss = model.meta_loss(rgb, depth, state,
-                                target, predict_target,
-                                batch_post_update)
+    meta_loss, meta_loss_mat = model.meta_loss(rgb, depth, state,
+                                               target, predict_target,
+                                               batch_post_update)
     print('outer_loss:', meta_loss)
+    print('meta_loss_mat', meta_loss_mat)
     meta_loss.backward()
     for name, p in model.named_parameters():
         if ('temp' in name):
@@ -522,11 +529,11 @@ def test_adapt_meta(model: Daml):
             model.zero_grad()
             pre_update = OrderedDict(model.meta_named_parameters())
             meta_optimizer = torch.optim.Adam(model.parameters())
-            batch_post_update = model.adapt(
+            batch_post_update, _ = model.adapt(
                 rgb, depth, pre_update, FLAGS.adapt_lr, FLAGS.num_updates)
-            meta_loss = model.meta_loss(rgb, depth, state,
-                                        target, predict_target,
-                                        batch_post_update)
+            meta_loss, _ = model.meta_loss(rgb, depth, state,
+                                           target, predict_target,
+                                           batch_post_update)
             meta_loss.backward()
             meta_optimizer.step()
 
