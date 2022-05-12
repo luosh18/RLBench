@@ -4,74 +4,15 @@ from typing import List, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from absl import app, flags
+import workspace.models.mdn as mdn
+from absl import app
 from torchmeta.modules import (MetaConv1d, MetaConv2d, MetaLinear, MetaModule,
                                MetaSequential)
-
-import workspace.models.mdn as mdn
+from workspace.learn.flags import FLAGS
 from workspace.models.meta_groupnorm import MetaGroupNorm
 from workspace.models.saptial_softmax import SpatialSoftmax
-from workspace.utils import Timer
 from workspace.models.vector_norm import VectorNorm
-
-FLAGS = flags.FLAGS
-
-# Dataset/Method options
-flags.DEFINE_integer('im_width', 128,
-                     'width of the images in the demo videos -- 125 for sim_push, 128 to suit RLBench')
-flags.DEFINE_integer('im_height', 128,
-                     'height of the images in the demo videos -- 125 for sim_push, 128 to suit RLBench')
-flags.DEFINE_integer('num_channels', 3,
-                     'number of channels of the images in the demo videos')
-flags.DEFINE_integer('state_size', 10,
-                     'dimension of robot state -- 10 for Jaco (include gripper & tip position)')
-flags.DEFINE_integer('action_size', 7,
-                     'dimension of robot action -- 7 for Jaco (include gripper)')
-flags.DEFINE_integer('T', 50,
-                     'time horizon of the demo videos -- 50 for reach, 100 for push, DAML to be determined')
-flags.DEFINE_integer('mdn_samples', 100,
-                     'sample "mdn_samples" actions from MDN and choose the one with highest probability')
-flags.DEFINE_float('adapt_lr', '0.005',
-                   'step size alpha for inner gradient update -- 0.005 for p&p')
-
-# Training Options
-flags.DEFINE_bool('cuda', True, 'using GPU, default true')
-flags.DEFINE_integer('meta_batch_size', 4,
-                     'number of tasks sampled per meta-update -- 4 for p&p')
-flags.DEFINE_integer('num_updates', 5,
-                     'number of inner gradient updates during training -- 5 for p&p')
-flags.DEFINE_float('inner_clip', 30.0,
-                   'inner gradient clipping  -- [-30, 30] for p&p')
-
-## Model Options ##
-# 2D Convs
-flags.DEFINE_list('strides', [2, 2, 2, 1, 1],
-                  'list of 2d conv stride, len is num of conv layers -- p&p: [2, 2, 2, 1, 1]')
-flags.DEFINE_integer('num_filters', 64,
-                     'number of filters for conv nets -- 64 for placing')
-flags.DEFINE_integer('filter_size', 3,
-                     'filter size for conv nets -- 3 for placing')
-flags.DEFINE_integer('num_depth_filters', 16,
-                     'number of filters for depth conv layer -- 16 for placing')
-flags.DEFINE_bool('conv_bt', True,
-                  'use bias transformation for the first conv layer, N/A for using pretraining')
-# Gripper Pose Prediction
-flags.DEFINE_integer('predict_size', 3,
-                     'dimension of end-effector position prediction (tip x,y,z)')
-# 1D Temporal Convs
-flags.DEFINE_list('num_temp_filters', [10, 30, 30],
-                  'number of filters for temporal convolution for ee pose prediction')
-flags.DEFINE_integer('temp_filter_size', 10,
-                     'filter size for temporal convolution -- 10x1 for p&p')
-# full-connected layers
-flags.DEFINE_integer('num_fc_layers', 4,
-                     'number of fully-connected layers -- 4 for p&p')
-flags.DEFINE_integer('fc_layer_size', 50,
-                     'hidden dimension of fully-connected layers -- 50 for p&p')
-flags.DEFINE_integer('bt_dim', 20,
-                     'the dimension of bias transformation for FC layers -- 20 for all exp')
-flags.DEFINE_integer('num_gaussian', 20,
-                     'number of Gaussian kernels in MDN')
+from workspace.utils import Timer
 
 """ note for input, output, target
 rgb:        (3, 128, 128)
