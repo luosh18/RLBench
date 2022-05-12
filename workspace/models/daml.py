@@ -1,3 +1,4 @@
+import os
 from collections import OrderedDict
 from typing import List, Tuple
 
@@ -12,7 +13,7 @@ from workspace.learn.flags import FLAGS
 from workspace.models.meta_groupnorm import MetaGroupNorm
 from workspace.models.saptial_softmax import SpatialSoftmax
 from workspace.models.vector_norm import VectorNorm
-from workspace.utils import Timer
+from workspace.utils import Timer, check_and_make
 
 """ note for input, output, target
 rgb:        (3, 128, 128)
@@ -21,6 +22,8 @@ state:      (10)
 action:     (7)
 predict:    (3)
 """
+
+MODEL_FOLDER = 'model'
 
 
 class Daml(MetaModule):
@@ -376,6 +379,28 @@ class Daml(MetaModule):
         return loss.sum(1).mean(), loss.mean(0)
 
 
+def save_model(model: Daml, optim: torch.optim.Optimizer, name):
+    save_dir = os.path.join(FLAGS.save_dir, MODEL_FOLDER)
+    check_and_make(save_dir)
+    filename = os.path.join(save_dir, name + '.pt')
+    torch.save(model.state_dict(), filename)
+    # save meta_named_parameters (backup)
+    torch.save(OrderedDict(model.meta_named_parameters()),
+               filename + '.backup')
+    # save optimizer
+    opt_filename = os.path.join(
+        save_dir, name + '_optim.pt')
+    torch.save(optim.state_dict(), opt_filename)
+
+
+def load_model(model: Daml, optim: torch.optim.Optimizer, name):
+    save_dir = os.path.join(FLAGS.save_dir, MODEL_FOLDER)
+    filename = os.path.join(save_dir, name + '.pt')
+    model.load_state_dict(torch.load(filename))
+    opt_filename = os.path.join(save_dir, name + '_optim.pt')
+    optim.load_state_dict(torch.load(opt_filename))
+
+
 def test_params(model: Daml):
     params = OrderedDict(model.meta_named_parameters())
     for name, param in params.items():
@@ -480,32 +505,31 @@ def test_adapt_meta(model: Daml):
 
 
 def test_save_load(model: Daml, optim: torch.optim.Optimizer):
-    # save model
-    state_dict = model.state_dict()
-    torch.save(model.state_dict(), 'state_dict.pt')
-    model.load_state_dict(torch.load('state_dict.pt'))
-    for k in state_dict:
-        if not torch.equal(state_dict[k], model.get_parameter(k)):
+    print('----- test_save_load -----')
+    model_dict = model.state_dict()
+    optim_dict = optim.state_dict()
+    save_model(model, optim, 'test')
+    load_model(model, optim, 'test')
+    for k in model_dict:
+        if not torch.equal(model_dict[k], model.get_parameter(k)):
             print(k)
-    # save meta_named_parameters (backup)
-    torch.save(OrderedDict(model.meta_named_parameters()), 'meta_named.pt')
-    model.load_state_dict(torch.load('meta_named.pt'))
-    for k in state_dict:
-        if not torch.equal(state_dict[k], model.get_parameter(k)):
-            print(k)
-    # save optimizer
-    optim_state = optim.state_dict()
-    torch.save(optim.state_dict(), 'optim.pt')
-    optim.load_state_dict(torch.load('optim.pt'))
-    if not str(optim_state) == str(optim.state_dict()):
+    if not str(optim_dict) == str(optim.state_dict()):
         print(False)
+    # check backup
+    save_dir = FLAGS.save_dir
+    filename = os.path.join(
+        save_dir, MODEL_FOLDER, 'test.pt.backup')
+    model.load_state_dict(torch.load(filename))
+    for k in model_dict:
+        if not torch.equal(model_dict[k], model.get_parameter(k)):
+            print(k)
 
 
 def main(argv):
     model = Daml()
     print(model)
     # test_params(model)
-    test_adapt_meta(model)
+    # test_adapt_meta(model)
     # test_save_load(model, torch.optim.Adam(model.parameters()))
 
 
