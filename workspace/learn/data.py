@@ -84,7 +84,7 @@ class SequentialDataset(Dataset):
         )
         sampled_demo = {}
         for key in demo:
-            sampled_demo[key] = np.take(demo[key], fs, axis=0)
+            sampled_demo[key] = np.take(demo[key], fs, axis=0).astype(np.float32)
             # for i, f in enumerate(fs):
             #     assert np.array_equal(sampled_demo[key][i], demo[key][f])
         # imgs = [
@@ -128,12 +128,14 @@ def test_dataloader(dataset: SequentialDataset, randdataset: RandomDataset):
     batch_size = 4
     r_dataloader = DataLoader(dataset, batch_size, pin_memory=True)
     h_dataloader = DataLoader(randdataset, batch_size, pin_memory=True)
-    r_batch_demo = next(iter(r_dataloader))
-    for v in r_batch_demo:
-        print(v.is_pinned(), v.shape)
-    h_batch_demo = next(iter(h_dataloader))
-    for v in h_batch_demo:
-        print(v.is_pinned(), v.shape)
+    r_loader = iter(r_dataloader)
+    for _ in range(10):
+        for v in next(r_loader):
+            print(v.is_pinned(), v.shape)
+    h_loader = iter(h_dataloader)
+    for _ in range(10):
+        for v in next(h_loader):
+            print(v.is_pinned(), v.shape)
 
 
 if __name__ == '__main__':

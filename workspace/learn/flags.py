@@ -31,6 +31,8 @@ flags.DEFINE_integer('iteration', 75000,
                      'number of meta-training iterations  -- 75000 for p&p')
 flags.DEFINE_integer('save_iter', 1500,
                      'iteration interval for model saving')
+flags.DEFINE_integer('log_iter', 100,
+                     'iteration interval for loggin loss')
 flags.DEFINE_string('save_dir', '/home/cscg-east92007/disk/save',
                     'dir to save models')
 flags.DEFINE_bool('cuda', True, 'using GPU, default true')

@@ -316,7 +316,7 @@ class Daml(MetaModule):
         return loss
 
     def adapt(self, rgb: torch.Tensor, depth: torch.Tensor, params: OrderedDict,
-              step_size=0.05, updates=1) -> Tuple[List[OrderedDict], List[torch.Tensor]]:
+              step_size=0.05, updates=1) -> Tuple[List[OrderedDict], torch.Tensor]:
         """perform adaptive gradient update "updates" times for each task in batch
         rgb: [B, T, C, H, W]; depth: [B, T, 1, H, W];
         T is the length of demo (sampled)
@@ -351,7 +351,7 @@ class Daml(MetaModule):
                 for loss, params in zip(adapt_loss, batch_params)
             ]
 
-        return batch_params, adapt_losses  # mean adapt loss across batch for each update
+        return batch_params, torch.cat(adapt_losses)  # mean adapt loss across batch for each update
 
     def meta_loss(self, rgb: torch.Tensor, depth: torch.Tensor, state: torch.Tensor,
                   target: torch.Tensor, predict_target: torch.Tensor,
