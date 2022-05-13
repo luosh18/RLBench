@@ -128,9 +128,9 @@ def test_dataloader(dataset: SequentialDataset, randdataset: RandomDataset):
     print('----- test_dataloader -----')
     batch_size = 4
     r_dataloader = DataLoader(
-        dataset, batch_size, pin_memory=True, num_workers=1)
+        dataset, batch_size, pin_memory=True, num_workers=1, persistent_workers=True)
     h_dataloader = DataLoader(
-        randdataset, batch_size, pin_memory=True,  num_workers=1)
+        randdataset, batch_size, pin_memory=True,  num_workers=1, persistent_workers=True)
     r_loader = iter(r_dataloader)
     for _ in range(10):
         for v in next(r_loader):

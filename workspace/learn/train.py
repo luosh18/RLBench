@@ -34,11 +34,10 @@ def main(argv):
     r_dataset = SequentialDataset(dataset_root, task_name, T, dataset_seed)
     h_dataset = RandomDataset(dataset_root, task_name, T, dataset_seed, True)
     r_dataloader = DataLoader(
-        r_dataset, meta_batch_size, pin_memory=True, num_workers=1)
+        r_dataset, meta_batch_size, pin_memory=True, num_workers=1, persistent_workers=True)
     h_dataloader = DataLoader(
-        h_dataset, meta_batch_size, pin_memory=True, num_workers=1)
-    r_loader = iter(r_dataloader)
-    h_loader = iter(h_dataloader)
+        h_dataset, meta_batch_size, pin_memory=True, num_workers=1, persistent_workers=True)
+    dataset_len = len(r_dataset)
 
     model = Daml()
     meta_optimizer = torch.optim.Adam(model.parameters())
@@ -67,20 +66,16 @@ def main(argv):
             meta_running_loss.zero_()
 
         # get a batch of demo pair
-        try:
-            r_rgb, r_depth, r_state, r_action, r_predict = [
-                f.to(model.device) for f in next(r_loader)]
-            h_rgb, h_depth, _, _, _ = [
-                f.to(model.device) for f in next(h_loader)]
-        except StopIteration:
-            epoch += 1
-            logger.info('%d new-epoch %d' % (i, epoch))
+        if i % dataset_len == 0:
             r_loader = iter(r_dataloader)
             h_loader = iter(h_dataloader)
-            r_rgb, r_depth, r_state, r_action, r_predict = [
-                f.to(model.device) for f in next(r_loader)]
-            h_rgb, h_depth, _, _, _ = [
-                f.to(model.device) for f in next(h_loader)]
+            logger.info('%d new-epoch %d' % (i, epoch))
+            epoch += 1
+
+        r_rgb, r_depth, r_state, r_action, r_predict = [
+            f.to(model.device, non_blocking=True) for f in next(r_loader)]
+        h_rgb, h_depth, _, _, _ = [
+            f.to(model.device, non_blocking=True) for f in next(h_loader)]
 
         # adapt
         pre_update = OrderedDict(

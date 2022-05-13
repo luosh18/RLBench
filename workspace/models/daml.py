@@ -359,7 +359,7 @@ class Daml(MetaModule):
                 for loss, params in zip(adapt_loss, batch_params)
             ]
         # mean adapt loss across batch for each update
-        return batch_params, torch.tensor(adapt_losses, device=self.device, requires_grad=False)
+        return batch_params, torch.stack(adapt_losses).clone().detach()
 
     def meta_loss(self, rgb: torch.Tensor, depth: torch.Tensor, state: torch.Tensor,
                   target: torch.Tensor, predict_target: torch.Tensor,
@@ -384,7 +384,7 @@ class Daml(MetaModule):
             in zip(outs, continuous_tg, discrete_tg, predict_target)
         ])  # B, 3
         # mean across batch & sum across loss, mean loss for each kind of loss
-        return loss.sum(1).mean(), loss.mean(0)
+        return loss.sum(1).mean(), loss.mean(0).clone().detach()
 
 
 def save_model(model: Daml, optim: torch.optim.Optimizer, name):
