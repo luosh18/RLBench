@@ -1,4 +1,5 @@
-from absl import flags
+import logging
+from absl import app, flags
 
 FLAGS = flags.FLAGS
 
@@ -72,3 +73,13 @@ flags.DEFINE_integer('bt_dim', 20,
                      'the dimension of bias transformation for FC layers -- 20 for all exp')
 flags.DEFINE_integer('num_gaussian', 20,
                      'number of Gaussian kernels in MDN')
+
+
+def test(argv):
+    f = FLAGS.flag_values_dict()
+    # print(f['temp_filter_size'])
+    logging.info('FLAGS: %s' % str(f))
+
+
+if __name__ == '__main__':
+    app.run(test)

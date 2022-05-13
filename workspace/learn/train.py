@@ -27,6 +27,8 @@ def main(argv):
     adapt_lr = FLAGS.adapt_lr
     num_updates = FLAGS.num_updates
 
+    logger.info('train with flags: %s' % str(FLAGS.flag_values_dict()))
+
     r_dataset = SequentialDataset(dataset_root, task_name, T, dataset_seed)
     h_dataset = RandomDataset(dataset_root, task_name, T, dataset_seed, True)
     r_dataloader = DataLoader(r_dataset, meta_batch_size, pin_memory=True)
@@ -37,23 +39,26 @@ def main(argv):
     model = Daml()
     meta_optimizer = torch.optim.Adam(model.parameters())
 
-    adapt_running_loss = torch.zeros(num_updates, device=model.device)
-    meta_running_loss = torch.zeros(3, device=model.device)
+    epoch = 0
+    adapt_running_loss = torch.zeros(
+        num_updates, device=model.device, requires_grad=False)
+    meta_running_loss = torch.zeros(
+        3, device=model.device, requires_grad=False)
 
     for i in tqdm(range(iteration)):
         model.zero_grad()  # remember to zero grad
 
         if i % save_iter == 0:
             # save model
-            save_model(model, meta_optimizer, str(i))
-            logger.info('model saved @ %d' % i)
+            save_model(model, meta_optimizer, i)
+            logger.info('%d model-saved' % i)
         if i % log_iter == 0:
             # log mean adapt-loss
-            logger.info('adapt-loss @ %d %s' % (
+            logger.info('%d adapt-loss %s' % (
                 i, (adapt_running_loss / log_iter).tolist()))
             adapt_running_loss.zero_()
             # log mean meta-loss
-            logger.info('meta-loss @%d %s' % (
+            logger.info('%d meta-loss %s' % (
                 i, (meta_running_loss / log_iter).tolist()))
             meta_running_loss.zero_()
 
@@ -64,7 +69,8 @@ def main(argv):
             h_rgb, h_depth, _, _, _ = [
                 f.to(model.device) for f in next(h_loader)]
         except StopIteration:
-            logger.info('new epoch @ %d' % i)
+            epoch += 1
+            logger.info('%d new-epoch %d' % (i, epoch))
             r_loader = iter(r_dataloader)
             h_loader = iter(h_dataloader)
             r_rgb, r_depth, r_state, r_action, r_predict = [
@@ -78,16 +84,29 @@ def main(argv):
         batch_post_update, adapt_losses = model.adapt(
             h_rgb, h_depth, pre_update, adapt_lr, num_updates
         )  # adaptation (get post-update params)
-        adapt_running_loss += adapt_losses
+        adapt_running_loss.add_(adapt_losses)
 
         # meta
         meta_loss, meta_loss_mat = model.meta_loss(
             r_rgb, r_depth, r_state, r_action, r_predict, batch_post_update
         )  # post-update
-        meta_running_loss += meta_loss_mat
+        meta_running_loss.add_(meta_loss_mat)
 
         meta_loss.backward()
         meta_optimizer.step()
+
+    # save final
+    # save model
+    model.zero_grad()
+    save_model(model, meta_optimizer, iteration)
+    logger.info('%d model-saved' % iteration)
+    # log mean adapt-loss
+    logger.info('%d adapt-loss %s' % (
+        iteration, (adapt_running_loss / log_iter).tolist()))
+    # log mean meta-loss
+    logger.info('%d meta-loss %s' % (
+        iteration, (meta_running_loss / log_iter).tolist()))
+    logger.info('training done, iteration %d epoch %d' % (iteration, epoch))
 
 
 if __name__ == '__main__':

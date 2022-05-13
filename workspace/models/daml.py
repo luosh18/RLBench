@@ -381,6 +381,7 @@ class Daml(MetaModule):
 
 def save_model(model: Daml, optim: torch.optim.Optimizer, name):
     save_dir = os.path.join(FLAGS.save_dir, MODEL_FOLDER)
+    name = str(name)
     check_and_make(save_dir)
     filename = os.path.join(save_dir, name + '.pt')
     torch.save(model.state_dict(), filename)
