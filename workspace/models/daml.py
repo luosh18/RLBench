@@ -187,7 +187,7 @@ class Daml(MetaModule):
             *self.fc_temp_convs.children(),
         ]:
             if isinstance(m, MetaConv2d):
-                nn.init.xavier_uniform_(m.weight)
+                nn.init.kaiming_uniform_(m.weight)
                 nn.init.zeros_(m.bias)
             elif isinstance(m, MetaGroupNorm) or isinstance(m, MetaConv1d):
                 nn.init.normal_(m.weight, std=0.01)

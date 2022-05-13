@@ -38,6 +38,8 @@ def main(argv):
     h_dataloader = DataLoader(
         h_dataset, meta_batch_size, pin_memory=True, num_workers=1, persistent_workers=True)
     dataset_len = len(r_dataset)
+    num_dataset_batch = (dataset_len // meta_batch_size) + (1 if dataset_len % meta_batch_size else 0)
+    print('num_dataset_batch', num_dataset_batch)
 
     model = Daml()
     meta_optimizer = torch.optim.Adam(model.parameters())
@@ -66,7 +68,7 @@ def main(argv):
             meta_running_loss.zero_()
 
         # get a batch of demo pair
-        if i % dataset_len == 0:
+        if i % num_dataset_batch == 0:
             r_loader = iter(r_dataloader)
             h_loader = iter(h_dataloader)
             logger.info('%d new-epoch %d' % (i, epoch))
