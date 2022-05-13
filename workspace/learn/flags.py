@@ -30,7 +30,7 @@ flags.DEFINE_integer('dataset_seed', 42,
                      'random seed for dataset')
 flags.DEFINE_integer('iteration', 75000,
                      'number of meta-training iterations  -- 75000 for p&p')
-flags.DEFINE_integer('save_iter', 1500,
+flags.DEFINE_integer('save_iter', 500,
                      'iteration interval for model saving')
 flags.DEFINE_integer('log_iter', 100,
                      'iteration interval for loggin loss')

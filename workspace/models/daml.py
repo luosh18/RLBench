@@ -222,6 +222,11 @@ class Daml(MetaModule):
             'rgb_conv', 'depth_conv', 'convs',
             'fcs',
         ]
+        self.adapts_params_name = [
+            name
+            for name, _ in self.named_parameters()
+            if name.split('.', 1)[0] in self.adapt_prefixes
+        ]
 
     def forward_conv(self, rgb_in, depth_in, params) -> torch.Tensor:
         # build bias transformation for conv2d
@@ -305,14 +310,14 @@ class Daml(MetaModule):
         fps = [fp.t().unsqueeze(0) for fp in fps]  # B[1, fp, T]
         fcs = [fc.t().unsqueeze(0) for fc in fcs]  # B[1, fc, T]
         # temp conv (adaptive loss)
-        loss = [
+        loss = torch.stack([
             self.feature_temp_convs(
                 fp, params=self.get_subdict(params, 'feature_temp_convs')
             ) + self.fc_temp_convs(
                 fc, params=self.get_subdict(params, 'fc_temp_convs')
             )
             for fp, fc, params in zip(fps, fcs, batch_params)
-        ]  # B[1]
+        ])  # B, 1
         return loss
 
     def adapt(self, rgb: torch.Tensor, depth: torch.Tensor, params: OrderedDict,
@@ -321,18 +326,21 @@ class Daml(MetaModule):
         rgb: [B, T, C, H, W]; depth: [B, T, 1, H, W];
         T is the length of demo (sampled)
         """
+
+        def clone_params(params: OrderedDict):
+            params_copy = params.copy()
+            for name in self.adapts_params_name:
+                params_copy[name] = params_copy[name].clone()
+            return params_copy
+
         batch_params = [
-            OrderedDict([
-                (name,
-                 p.clone() if name.split('.', 1)[0] in self.adapt_prefixes else p)  # reduce memory usage
-                for name, p in params.items()
-            ]) for _ in range(rgb.shape[0])
+            clone_params(params) for _ in range(rgb.shape[0])
         ]  # clone param for each task in batch -> B[params]
 
         def update_params(loss, params):
             params_to_update = OrderedDict([
                 (name, params[name])
-                for name in params if name.split('.', 1)[0] in self.adapt_prefixes
+                for name in self.adapts_params_name
             ])
             grads = torch.autograd.grad(loss, params_to_update.values(),
                                         create_graph=True)  # create_graph to allow higher order gradient
@@ -345,13 +353,13 @@ class Daml(MetaModule):
         for _ in range(updates):
             adapt_loss = self._adapt_loss(rgb, depth, batch_params)
             # mean adapt loss across batch
-            adapt_losses.append(sum(adapt_loss) / len(adapt_loss))
+            adapt_losses.append(adapt_loss.mean())
             batch_params = [
                 update_params(loss, params)
                 for loss, params in zip(adapt_loss, batch_params)
             ]
-
-        return batch_params, torch.cat(adapt_losses)  # mean adapt loss across batch for each update
+        # mean adapt loss across batch for each update
+        return batch_params, torch.tensor(adapt_losses, device=self.device, requires_grad=False)
 
     def meta_loss(self, rgb: torch.Tensor, depth: torch.Tensor, state: torch.Tensor,
                   target: torch.Tensor, predict_target: torch.Tensor,
@@ -481,14 +489,25 @@ def test_adapt_meta(model: Daml):
     print('outer_loss:', meta_loss)
     print('meta_loss_mat', meta_loss_mat)
     meta_loss.backward()
-    for name, p in model.named_parameters():
-        if ('temp' in name):
-            print(name, p.flatten()[0], p.grad.norm())
+    prev = [
+        ' '.join((str(name), str(p.flatten()[0]), str(p.grad.norm())))
+        for name, p in model.named_parameters()
+        if ('temp' in name)
+    ]
+    prev = iter(prev)
 
     meta_optimizer.step()
     for name, p in model.named_parameters():
         if ('temp' in name):
+            print(next(prev))
             print(name, p.flatten()[0], p.grad.norm())
+
+    print('----- check meta-update -----')
+    meta_update = OrderedDict(model.meta_named_parameters())
+    for name in pre_update:
+        if not torch.equal(pre_update[name], meta_update[name]):
+            print(name, torch.linalg.norm(
+                post_update[name] - meta_update[name]))
 
     print('----- time for iterration -----')
     with Timer('10 Iterration'):
@@ -530,7 +549,7 @@ def main(argv):
     model = Daml()
     print(model)
     # test_params(model)
-    # test_adapt_meta(model)
+    test_adapt_meta(model)
     # test_save_load(model, torch.optim.Adam(model.parameters()))
 
 

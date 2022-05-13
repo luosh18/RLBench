@@ -29,10 +29,14 @@ def main(argv):
 
     logger.info('train with flags: %s' % str(FLAGS.flag_values_dict()))
 
+    torch.backends.cudnn.benchmark = True
+
     r_dataset = SequentialDataset(dataset_root, task_name, T, dataset_seed)
     h_dataset = RandomDataset(dataset_root, task_name, T, dataset_seed, True)
-    r_dataloader = DataLoader(r_dataset, meta_batch_size, pin_memory=True)
-    h_dataloader = DataLoader(h_dataset, meta_batch_size, pin_memory=True)
+    r_dataloader = DataLoader(
+        r_dataset, meta_batch_size, pin_memory=True, num_workers=1)
+    h_dataloader = DataLoader(
+        h_dataset, meta_batch_size, pin_memory=True, num_workers=1)
     r_loader = iter(r_dataloader)
     h_loader = iter(h_dataloader)
 
