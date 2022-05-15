@@ -112,13 +112,13 @@ class PairDataset(SequentialDataset):
         e, v = divmod(idx, self.variation_size)
         r_d = self.load_demo(v, e)
         r_d = self.sample_demo(r_d, self.rng)
-        if self.exclude:
-            e += self.episode_rng.integers(1, self.episode_size)
-            e = e % self.episode_size
+        r_d = (r_d['rgb'] / 255.0, r_d['depth'], r_d['state'], r_d['action'], r_d['predict'])
+        e += self.episode_rng.integers(1 if self.exclude else 0, self.episode_size)
+        e = e % self.episode_size
         h_d = self.load_demo(v, e)
         h_d = self.sample_demo(h_d, self.episode_rng)
-        return ((r_d['rgb'] / 255.0, r_d['depth'], r_d['state'], r_d['action'], r_d['predict']),
-                (h_d['rgb'] / 255.0, h_d['depth'], h_d['state'], h_d['action'], h_d['predict']))
+        h_d = (h_d['rgb'] / 255.0, h_d['depth'], h_d['state'], h_d['action'], h_d['predict'])
+        return r_d, h_d
 
 
 def test_dataset(dataset: SequentialDataset):
@@ -135,9 +135,9 @@ def test_dataloader(dataset: SequentialDataset, randdataset: PairDataset):
     print('----- test_dataloader -----')
     batch_size = 4
     r_dataloader = DataLoader(
-        dataset, batch_size, pin_memory=True, num_workers=1, persistent_workers=True)
+        dataset, batch_size, pin_memory=True, num_workers=0, persistent_workers=False)
     h_dataloader = DataLoader(
-        randdataset, batch_size, pin_memory=True,  num_workers=1, persistent_workers=True)
+        randdataset, batch_size, pin_memory=True,  num_workers=0, persistent_workers=False, shuffle=True)
     r_loader = iter(r_dataloader)
     for _ in range(10):
         for v in next(r_loader):
@@ -158,5 +158,4 @@ if __name__ == '__main__':
     dataset = SequentialDataset(dataset_root, task_name, frames, 0, True)
     test_dataset(dataset)
     randdataset = PairDataset(dataset_root, task_name, frames, 0, True, True)
-    test_dataset(randdataset)
     test_dataloader(dataset, randdataset)
