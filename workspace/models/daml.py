@@ -404,8 +404,9 @@ def save_model(model: Daml, optim: torch.optim.Optimizer, name):
 
 def load_model(model: Daml, optim: torch.optim.Optimizer, name):
     save_dir = os.path.join(FLAGS.save_dir, MODEL_FOLDER)
+    name = str(name)
     filename = os.path.join(save_dir, name + '.pt')
-    model.load_state_dict(torch.load(filename))
+    model.load_state_dict(torch.load(filename), strict=False)
     opt_filename = os.path.join(save_dir, name + '_optim.pt')
     optim.load_state_dict(torch.load(opt_filename))
 

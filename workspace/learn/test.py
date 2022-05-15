@@ -1,21 +1,24 @@
 import os
 from collections import OrderedDict
 
+import numpy as np
 import torch
 from absl import app
+from PIL import Image
 from rlbench.action_modes.action_mode import MoveArmThenGripper
 from rlbench.action_modes.arm_action_modes import JointVelocity
 from rlbench.action_modes.gripper_action_modes import Discrete
+from rlbench.backend.observation import Observation
 from rlbench.environment import Environment
 from rlbench.observation_config import ObservationConfig
 from rlbench.tasks import ReachTarget
+from rlbench.tasks.pick_and_place_test import PickAndPlaceTest
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from workspace.learn.data import SequentialDataset
 from workspace.learn.flags import FLAGS
-from workspace.models.daml import Daml
+from workspace.models.daml import Daml, load_model
 from workspace.utils import get_logger
-from rlbench.tasks.pick_and_place_test import PickAndPlaceTest
 
 
 def get_obs_config() -> ObservationConfig:
@@ -33,15 +36,34 @@ def get_obs_config() -> ObservationConfig:
     obs_config.wrist_camera.set_all(False)
     obs_config.front_camera.set_all(False)
 
-    obs_config.right_shoulder_camera.image_size = img_size
+    obs_config.left_shoulder_camera.image_size = img_size
 
     # Store depth as 0 - 1
-    obs_config.right_shoulder_camera.depth_in_meters = False
+    obs_config.left_shoulder_camera.depth_in_meters = False
 
     # We want to save the masks as rgb encodings.
     obs_config.left_shoulder_camera.masks_as_one_channel = False
 
     return obs_config
+
+
+def parse_obs(obs: Observation, device):
+    """rgb, depth, state"""
+    rgb = obs.left_shoulder_rgb.transpose(
+        2, 0, 1) / 255.0    # rgb, remember to transpose
+    depth = np.expand_dims(
+        obs.left_shoulder_depth, axis=0)
+    state = np.concatenate(
+        (obs.joint_positions, [obs.gripper_open], obs.gripper_pose[:3]))
+    # skip action
+    return (
+        torch.tensor(np.expand_dims(rgb, 0),
+                     dtype=torch.float32, device=device),
+        torch.tensor(np.expand_dims(depth, 0),
+                     dtype=torch.float32, device=device),
+        torch.tensor(np.expand_dims(state, 0),
+                     dtype=torch.float32, device=device),
+    )
 
 
 def main(argv):
@@ -60,6 +82,7 @@ def main(argv):
     # not using batch
     adapt_lr = FLAGS.adapt_lr
     num_updates = FLAGS.num_updates
+    mdn_samples = FLAGS.mdn_samples
 
     logger.info('test with flags: %s' % str(FLAGS.flag_values_dict()))
 
@@ -72,6 +95,7 @@ def main(argv):
         headless=False,
         robot_setup='jaco')
     env.launch()
+    print(env._pyrep.get_simulation_timestep())
     task = env.get_task(PickAndPlaceTest)
 
     torch.backends.cudnn.benchmark = True
@@ -84,29 +108,70 @@ def main(argv):
     dataset_len = len(dataset)
 
     model = Daml()
+    meta_optimizer = torch.optim.Adam(model.parameters())
+    load_model(model, meta_optimizer, FLAGS.iteration)
 
-    for i in tqdm(range(500, 510)):
-        h_rgb, h_depth, _, _, _ = [
+    for i in tqdm(range(FLAGS.iteration)):
+        h_rgb, h_depth, h_state, h_action, h_predict = [
             f.to(model.device, non_blocking=True) for f in next(loader)]
+
+        # DEBUG
+        # img = h_rgb[0][0].clone().detach().cpu().numpy().transpose(1, 2, 0) * 255
+        # print(img.shape)
+        # img = Image.fromarray(np.uint8(img))
+        # img.show()
+        # input()
+        # raise RuntimeError
 
         model.zero_grad()
 
-        # # adapt
-        # pre_update = OrderedDict(
-        #     model.meta_named_parameters())  # pre-update params
-        # batch_post_update, adapt_losses = model.adapt(
-        #     h_rgb, h_depth, pre_update, adapt_lr, num_updates
-        # )  # adaptation (get post-update params)
-        # logger.info('%d adapt-loss %s' % (
-        #     i, adapt_losses.tolist()))
+        # adapt
+        pre_update = OrderedDict(
+            model.meta_named_parameters())  # pre-update params
+        batch_post_update, adapt_losses = model.adapt(
+            h_rgb, h_depth, pre_update, adapt_lr, num_updates
+        )  # adaptation (get post-update params)
+        logger.info('%d adapt-loss %s' % (
+            i, adapt_losses.tolist()))
 
-        # TODO testing (set variation, test, log)
+        # load task env
         v, e = dataset.get_v_e(i)
         task.set_variation(v)
         task.reset()
-        x = input('step_ui')
+        # x = input('step_ui')
+        # env._robot.arm.set_joint_positions(
+        #     [1.0296657085418701, 1.869177222251892, 4.730264663696289, -
+        #         0.334658145904541, -1.8943476676940918, 0.22506999969482422],
+        #     True
+        # )
+
+        # DEBUG
+        # for action in h_action[0]:
+        #     print(action.shape)
+        #     task.step(action.cpu().detach().flatten().numpy())
+        # for state in h_state[0]:
+        #     task._robot.arm.set_joint_positions(state[:6].tolist(), True)
+        #     task._pyrep.step()
+
+        # test
+        for t in range(400):  # hard-coded teting time 20s
+            rgb, depth, state = parse_obs(
+                task.get_observation(), device=model.device)
+            # print(rgb.shape, depth.shape, state.shape, sep='\n')
+
+            pi, sigma, mu, discrete, predict_pose = model.forward(
+                rgb, depth, state, batch_post_update[0])
+            action = model.sample_action(pi, sigma, mu, discrete, mdn_samples)
+            action = action.cpu().detach().flatten().numpy()
+            # print(predict_pose)
+            # print(action.shape, action)
+
+            task.step(action)
+
+        raise RuntimeError
 
     env.shutdown()
+
 
 if __name__ == '__main__':
     app.run(main)
