@@ -56,6 +56,12 @@ def parse_obs(obs: Observation, device):
     state = np.concatenate(
         (obs.joint_positions, [obs.gripper_open], obs.gripper_pose[:3]))
     # skip action
+    # DEBUG
+    # img = rgb.transpose(1, 2, 0) * 255
+    # print(img.shape)
+    # img = Image.fromarray(np.uint8(img))
+    # img.show()
+    # input('parse_obs')
     return (
         torch.tensor(np.expand_dims(rgb, 0),
                      dtype=torch.float32, device=device),
