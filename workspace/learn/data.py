@@ -102,7 +102,7 @@ class SequentialDataset(Dataset):
         return sampled_demo
 
 
-class RandomDataset(SequentialDataset):
+class PairDataset(SequentialDataset):
     def __init__(self, dataset_root, task_name, frames, seed=None, exclude=False, debug=False) -> None:
         super().__init__(dataset_root, task_name, frames, seed, debug)
         self.exclude = exclude  # exclude episode in corresponding vanilla dataset
@@ -110,12 +110,15 @@ class RandomDataset(SequentialDataset):
 
     def __getitem__(self, idx):
         e, v = divmod(idx, self.variation_size)
+        r_d = self.load_demo(v, e)
+        r_d = self.sample_demo(r_d, self.rng)
         if self.exclude:
             e += self.episode_rng.integers(1, self.episode_size)
             e = e % self.episode_size
-        d = self.load_demo(v, e)
-        d = self.sample_demo(d, self.rng)
-        return d['rgb'] / 255.0, d['depth'], d['state'], d['action'], d['predict']
+        h_d = self.load_demo(v, e)
+        h_d = self.sample_demo(h_d, self.episode_rng)
+        return ((r_d['rgb'] / 255.0, r_d['depth'], r_d['state'], r_d['action'], r_d['predict']),
+                (h_d['rgb'] / 255.0, h_d['depth'], h_d['state'], h_d['action'], h_d['predict']))
 
 
 def test_dataset(dataset: SequentialDataset):
@@ -128,7 +131,7 @@ def test_dataset(dataset: SequentialDataset):
     # print((demos[0][0] * 255)[-1])
 
 
-def test_dataloader(dataset: SequentialDataset, randdataset: RandomDataset):
+def test_dataloader(dataset: SequentialDataset, randdataset: PairDataset):
     print('----- test_dataloader -----')
     batch_size = 4
     r_dataloader = DataLoader(
@@ -140,9 +143,11 @@ def test_dataloader(dataset: SequentialDataset, randdataset: RandomDataset):
         for v in next(r_loader):
             print(v.is_pinned(), v.shape)
     h_loader = iter(h_dataloader)
+    print('----- paired -----')
     for _ in range(10):
-        for v in next(h_loader):
-            print(v.is_pinned(), v.shape)
+        for p in next(h_loader):
+            for v in p:
+                print(v.is_pinned(), v.shape)
 
 
 if __name__ == '__main__':
@@ -152,6 +157,6 @@ if __name__ == '__main__':
     frames = 50
     dataset = SequentialDataset(dataset_root, task_name, frames, 0, True)
     test_dataset(dataset)
-    randdataset = RandomDataset(dataset_root, task_name, frames, 0, True, True)
+    randdataset = PairDataset(dataset_root, task_name, frames, 0, True, True)
     test_dataset(randdataset)
     test_dataloader(dataset, randdataset)

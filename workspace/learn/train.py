@@ -1,13 +1,13 @@
 from collections import OrderedDict
+
+import torch
 from absl import app
-from workspace.learn.data import RandomDataset, SequentialDataset
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+from workspace.learn.data import PairDataset
 from workspace.learn.flags import FLAGS
 from workspace.models.daml import Daml, save_model
 from workspace.utils import check_and_make, get_logger
-
-import torch
-from torch.utils.data import DataLoader
-from tqdm import tqdm
 
 
 def main(argv):
@@ -31,14 +31,12 @@ def main(argv):
 
     torch.backends.cudnn.benchmark = True
 
-    r_dataset = SequentialDataset(dataset_root, task_name, T, dataset_seed)
-    h_dataset = RandomDataset(dataset_root, task_name, T, dataset_seed, True)
-    r_dataloader = DataLoader(
-        r_dataset, meta_batch_size, pin_memory=True, num_workers=1, persistent_workers=True)
-    h_dataloader = DataLoader(
-        h_dataset, meta_batch_size, pin_memory=True, num_workers=1, persistent_workers=True)
-    dataset_len = len(r_dataset)
-    num_dataset_batch = (dataset_len // meta_batch_size) + (1 if dataset_len % meta_batch_size else 0)
+    dataset = PairDataset(dataset_root, task_name, T, dataset_seed, True)
+    dataloader = DataLoader(
+        dataset, meta_batch_size, shuffle=True, pin_memory=True, num_workers=1, persistent_workers=True)
+    dataset_len = len(dataset)
+    num_dataset_batch = (dataset_len // meta_batch_size) + \
+        (1 if dataset_len % meta_batch_size else 0)
     print('num_dataset_batch', num_dataset_batch)
 
     model = Daml()
@@ -69,15 +67,15 @@ def main(argv):
 
         # get a batch of demo pair
         if i % num_dataset_batch == 0:
-            r_loader = iter(r_dataloader)
-            h_loader = iter(h_dataloader)
+            loader = iter(dataloader)
             logger.info('%d new-epoch %d' % (i, epoch))
             epoch += 1
 
+        r_d, h_d = next(loader)
         r_rgb, r_depth, r_state, r_action, r_predict = [
-            f.to(model.device, non_blocking=True) for f in next(r_loader)]
+            f.to(model.device, non_blocking=True) for f in r_d]
         h_rgb, h_depth, _, _, _ = [
-            f.to(model.device, non_blocking=True) for f in next(h_loader)]
+            f.to(model.device, non_blocking=True) for f in h_d]
 
         # adapt
         pre_update = OrderedDict(

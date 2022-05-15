@@ -5,7 +5,6 @@ from typing import List, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import workspace.models.mdn as mdn
 from absl import app
 from torchmeta.modules import (MetaConv1d, MetaConv2d, MetaLinear, MetaModule,
                                MetaSequential)
@@ -115,9 +114,8 @@ class Daml(MetaModule):
         self.fcs = MetaSequential(*fcs)
 
         ###### Action ######
-        # Mixture Density Networks for continuous action [:6] (joint velocity)
-        self.mdn = mdn.MDN(
-            fc_layer_size, self.action_size - 1, FLAGS.num_gaussian)
+        # Linear for continuous action [:6] (joint velocity)
+        self.action = MetaLinear(fc_layer_size, self.action_size - 1)
         # Linear with Sigmoid for discrete action [6:] (gripper open/close)
         self.discrete = MetaSequential(
             MetaLinear(fc_layer_size, 1),
@@ -212,10 +210,15 @@ class Daml(MetaModule):
                 raise Exception(
                     'module %s in fcs not initialized' % m._get_name())
         # action (MDN & discrete)
-        for m in [*self.mdn.children(), *self.discrete.children()]:
+        for m in [*self.action.children(), *self.discrete.children()]:
             if isinstance(m, MetaLinear):
                 nn.init.normal_(m.weight, std=0.01)
                 nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.Sigmoid):
+                pass
+            else:
+                raise Exception(
+                    'module %s in action not initialized' % m._get_name())
         # register parameters to update during adaption
         self.adapt_prefixes = [
             'rgb_bt', 'depth_bt', 'fc_bt',
@@ -269,35 +272,17 @@ class Daml(MetaModule):
         return fc_out
 
     def forward_action(self, fc_out, params) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """MDN cat with Linear gripper output"""
-        pi, sigma, mu = self.mdn(
-            fc_out, params=self.get_subdict(params, 'mdn'))
+        action = self.action(fc_out, params=self.get_subdict(params, 'action'))
         discrete = self.discrete(
             fc_out, params=self.get_subdict(params, 'discrete'))
-        return pi, sigma, mu, discrete
+        return action, discrete
 
     def forward(self, rgb_in, depth_in, state_in, params):
         conv_out = self.forward_conv(rgb_in, depth_in, params)
         predict_pose = self.forward_predict_pose(conv_out, params)
         fc_out = self.forward_fc(conv_out, predict_pose, state_in, params)
-        pi, sigma, mu, discrete = self.forward_action(fc_out, params)
-        return pi, sigma, mu, discrete, predict_pose
-
-    def sample_action(self, pi, sigma, mu, discrete, num_samples: int):
-        targets = [
-            mdn.sample(pi, sigma, mu) for _ in range(num_samples)
-        ]  # S, B, O
-        probs = [
-            mdn.gaussian_probability(sigma, mu, t).log().sum(dim=1)
-            for t in targets
-        ]  # S, B
-        probs = torch.cat([p.unsqueeze(1) for p in probs], dim=1)  # B, S
-        target_maxs = torch.cat([
-            # choose max O along S for each batch
-            targets[prob_argmax][i].unsqueeze(0)  # 1, O
-            for i, prob_argmax in enumerate(probs.argmax(dim=1))  # B
-        ], dim=0)  # B, O
-        return torch.cat((target_maxs, discrete), dim=1)  # B, O+1
+        action, discrete = self.forward_action(fc_out, params)
+        return action, discrete, predict_pose
 
     def _adapt_loss(self, rgb: torch.Tensor, depth: torch.Tensor, batch_params: List[OrderedDict]) -> torch.Tensor:
         """loss for inner gradient update (video only) (private function)"""
@@ -376,11 +361,11 @@ class Daml(MetaModule):
         ]  # B[Tuple(pi, sigma, mu, discrete, predict_pose)]
         loss = torch.stack([
             torch.stack([  # sum across time
-                mdn.mdn_loss(pi, sigma, mu, ct),
+                F.mse_loss(action, ct, reduction='sum'),
                 F.binary_cross_entropy(discrete, dt, reduction='sum'),
                 F.mse_loss(predict, pt, reduction='sum'),
             ])
-            for (pi, sigma, mu, discrete, predict), ct, dt, pt
+            for (action, discrete, predict), ct, dt, pt
             in zip(outs, continuous_tg, discrete_tg, predict_target)
         ])  # B, 3
         # mean across batch & sum across loss, mean loss for each kind of loss
@@ -422,7 +407,7 @@ def test_params(model: Daml):
     print(params['rgb_bt'].shape)
 
 
-def test_forward(model):
+def test_forward(model: Daml):
     device = model.device
     batch_size = FLAGS.meta_batch_size
     im_width = FLAGS.im_width
@@ -430,7 +415,7 @@ def test_forward(model):
     num_channels = FLAGS.num_channels
     state_size = FLAGS.state_size
     action_size = FLAGS.action_size
-    mdn_samples = FLAGS.mdn_samples
+    # mdn_samples = FLAGS.mdn_samples
 
     rgb_in = torch.rand(
         [batch_size, num_channels, im_height, im_width], device=device)
@@ -440,9 +425,7 @@ def test_forward(model):
     params = OrderedDict(model.meta_named_parameters())
 
     with Timer('forward once'):
-        pi, sigma, mu, discrete = model.forward(
-            rgb_in, depth_in, state_in, params)
-        action = model.sample_action(pi, sigma, mu, discrete, mdn_samples)
+        action = model.forward(rgb_in, depth_in, state_in, params)
         print(action.shape)
 
 
