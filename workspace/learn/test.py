@@ -165,14 +165,16 @@ def main(argv):
                 task.get_observation(), device=model.device)
             # print(rgb.shape, depth.shape, state.shape, sep='\n')
 
-            pi, sigma, mu, discrete, predict_pose = model.forward(
+            action, discrete, predict_pose = model.forward(
                 rgb, depth, state, batch_post_update[0])
-            action = model.sample_action(pi, sigma, mu, discrete, mdn_samples)
-            action = action.cpu().detach().flatten().numpy()
+            action = torch.cat(
+                (action, discrete), dim=1
+            ).flatten().cpu().detach().numpy()
             # print(predict_pose)
             # print(action.shape, action)
 
-            task.step(action)
+            obs, _, terminate = task.step(action)
+            # print(obs.gripper_open)
 
         raise RuntimeError
 
