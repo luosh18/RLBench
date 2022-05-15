@@ -61,6 +61,10 @@ class SequentialDataset(Dataset):
         d = self.sample_demo(d, self.rng)
         return d['rgb'] / 255.0, d['depth'], d['state'], d['action'], d['predict']
 
+    def get_v_e(self, idx):
+        e, v = divmod(idx, self.variation_size)
+        return v, e
+
     def load_demo(self, variation: int, episode: int):
         demo_pkl = join(self.dataset_root, self.task_name,
                         VARIATIONS_FOLDER % variation,
