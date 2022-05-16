@@ -31,8 +31,8 @@ flags.DEFINE_integer('episodes_per_task', 10,
                      'The number of episodes to collect per task.')
 flags.DEFINE_integer('variations', -1,
                      'Number of variations to collect per task. -1 for all.')
-flags.DEFINE_float('simulation_timestep', 0.05,
-                   'default 0.05 second for each frame')
+flags.DEFINE_float('simulation_timestep', 0.1,  # TODO: remember to set simulation_timestep while testing
+                   'default 0.1 second for each frame')
 
 
 def check_and_make(dir):

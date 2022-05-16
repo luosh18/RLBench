@@ -10,12 +10,14 @@ flags.DEFINE_integer('im_height', 128,
                      'height of the images in the demo videos -- 125 for sim_push, 128 to suit RLBench')
 flags.DEFINE_integer('num_channels', 3,
                      'number of channels of the images in the demo videos')
-flags.DEFINE_integer('state_size', 10,
-                     'dimension of robot state -- 10 for Jaco (include gripper & tip position)')
+flags.DEFINE_integer('state_size', 9,
+                     'dimension of robot state -- 9 for Jaco (exclude gripper, include tip position)')
 flags.DEFINE_integer('action_size', 7,
                      'dimension of robot action -- 7 for Jaco (include gripper)')
 flags.DEFINE_integer('T', 50,
                      'time horizon of the demo videos -- 50 for reach, 100 for push, DAML to be determined')
+flags.DEFINE_float('simulation_timestep', 0.1,  # TODO: remember to set simulation_timestep while testing
+                   'default 0.1 second for each frame')
 flags.DEFINE_integer('mdn_samples', 100,
                      'sample "mdn_samples" actions from MDN and choose the one with highest probability')
 flags.DEFINE_float('adapt_lr', '0.005',
