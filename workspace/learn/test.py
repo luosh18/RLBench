@@ -117,7 +117,7 @@ def main(argv):
     meta_optimizer = torch.optim.Adam(model.parameters())
     load_model(model, meta_optimizer, FLAGS.iteration)
 
-    for i in tqdm(range(FLAGS.iteration)):
+    for i in tqdm(range(10)):
         h_rgb, h_depth, h_state, h_action, h_predict = [
             f.to(model.device, non_blocking=True) for f in next(loader)]
 
@@ -165,13 +165,28 @@ def main(argv):
                 task.get_observation(), device=model.device)
             # print(rgb.shape, depth.shape, state.shape, sep='\n')
 
-            action, discrete, predict_pose = model.forward(
-                rgb, depth, state, batch_post_update[0])
+            # action, discrete, predict_pose = model.forward(
+            #     rgb, depth, state, batch_post_update[0])
+
+            conv_out = model.forward_conv(rgb, depth, batch_post_update[0])
+            predict_pose = model.forward_predict_pose(conv_out, batch_post_update[0])
+            fc_out = model.forward_fc(conv_out, predict_pose, state, batch_post_update[0])
+            action, discrete = model.forward_action(fc_out, batch_post_update[0])
+
             action = torch.cat(
                 (action, discrete), dim=1
             ).flatten().cpu().detach().numpy()
-            # print(predict_pose)
+            print(t, action, predict_pose.flatten().cpu().detach().numpy())
+            # input()
+            if action[-1] < 0.90:
+                action[-1] = 0.0
+            elif action[-1] > 0.3:
+                action[-1] = 1.0
             # print(action.shape, action)
+
+            # wps = task._task.get_waypoints()
+            # action = wps[0].get_waypoint_object().get_pose()
+            # action = np.append(action, 1.0)
 
             obs, _, terminate = task.step(action)
             # print(obs.gripper_open)
