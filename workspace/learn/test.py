@@ -176,12 +176,11 @@ def main(argv):
             action = torch.cat(
                 (action, discrete), dim=1
             ).flatten().cpu().detach().numpy()
-            # print(t, action, predict_pose.flatten().cpu().detach().numpy())
-            print(t, action[-1])
+            print(t, action, predict_pose.flatten().cpu().detach().numpy())
             # input()
-            if obs.gripper_open and action[-1] < 0.75:
+            if action[-1] < 0.90:
                 action[-1] = 0.0
-            if obs.gripper_open < 0.95 and action[-1] > 0.25:
+            elif action[-1] > 0.3:
                 action[-1] = 1.0
             # print(action.shape, action)
 

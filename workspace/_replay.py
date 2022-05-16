@@ -11,7 +11,7 @@ from rlbench.tasks.pick_and_place import PickAndPlace
 
 
 # To use 'saved' demos, set the path below, and set live_demos=False
-live_demos = False
+live_demos = True
 DATASET = '' if live_demos else os.path.join(
     os.path.expanduser('~'), 'disk/rlbench_data')
 
@@ -28,6 +28,10 @@ env = Environment(
     robot_setup='jaco')
 env.launch()
 
+print(env._pyrep.get_simulation_timestep())
+env._pyrep.set_simulation_timestep(0.1)
+print(env._pyrep.get_simulation_timestep())
+
 task_env = env.get_task(PickAndPlace)
 
 
@@ -37,6 +41,7 @@ def fn(v=0):
     demos = task_env.get_demos(
         1, live_demos, random_selection=False, from_episode_number=0)
     demo = demos[0]
+    print(len(demo))
     task_env.reset()
 
     # task = PickAndPlace()
