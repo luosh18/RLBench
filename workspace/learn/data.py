@@ -99,6 +99,11 @@ class SequentialDataset(Dataset):
         # imgs[0].save('tmp.gif', save_all=True,
         #              append_images=imgs[1:], duration=100, loop=0)
         # print(len(imgs))
+        ## remove gripper_open, may help gripper close? ##
+        # print(sampled_demo['state'].shape, sampled_demo['state'][0], sep='\n')
+        sampled_demo['state'] = np.take(
+            sampled_demo['state'], [0, 1, 2, 3, 4, 5, 7, 8, 9], axis=1)
+        # print(sampled_demo['state'].shape, sampled_demo['state'][0], sep='\n')
         return sampled_demo
 
 
@@ -112,21 +117,24 @@ class PairDataset(SequentialDataset):
         e, v = divmod(idx, self.variation_size)
         r_d = self.load_demo(v, e)
         r_d = self.sample_demo(r_d, self.rng)
-        r_d = (r_d['rgb'] / 255.0, r_d['depth'], r_d['state'], r_d['action'], r_d['predict'])
-        e += self.episode_rng.integers(1 if self.exclude else 0, self.episode_size)
+        r_d = (r_d['rgb'] / 255.0, r_d['depth'],
+               r_d['state'], r_d['action'], r_d['predict'])
+        e += self.episode_rng.integers(1 if self.exclude else 0,
+                                       self.episode_size)
         e = e % self.episode_size
         h_d = self.load_demo(v, e)
         h_d = self.sample_demo(h_d, self.episode_rng)
-        h_d = (h_d['rgb'] / 255.0, h_d['depth'], h_d['state'], h_d['action'], h_d['predict'])
+        h_d = (h_d['rgb'] / 255.0, h_d['depth'],
+               h_d['state'], h_d['action'], h_d['predict'])
         return r_d, h_d
 
 
 def test_dataset(dataset: SequentialDataset):
     print('----- test_dataset -----')
     demos = [dataset[i] for i in range(0, 10)]
-    demos = [dataset[i] for i in range(500, 510)]
-    for v in demos[0]:
-        print(v.shape)
+    # demos = [dataset[i] for i in range(500, 510)]
+    # for v in demos[0]:
+    #     print(v.shape)
     # print(demos[0][0][-1])
     # print((demos[0][0] * 255)[-1])
 
@@ -151,11 +159,11 @@ def test_dataloader(dataset: SequentialDataset, randdataset: PairDataset):
 
 
 if __name__ == '__main__':
-    dataset_root = join(os.path.expanduser('~'), 'disk/dataset')
+    dataset_root = join(os.path.expanduser('~'), 'disk/dataset_ee')
     task_name = 'pick_and_place'
     batch_size = 4
     frames = 50
     dataset = SequentialDataset(dataset_root, task_name, frames, 0, True)
     test_dataset(dataset)
     randdataset = PairDataset(dataset_root, task_name, frames, 0, True, True)
-    test_dataloader(dataset, randdataset)
+    # test_dataloader(dataset, randdataset)
