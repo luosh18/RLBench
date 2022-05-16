@@ -117,7 +117,7 @@ def main(argv):
     meta_optimizer = torch.optim.Adam(model.parameters())
     load_model(model, meta_optimizer, FLAGS.iteration)
 
-    for i in tqdm(range(FLAGS.iteration)):
+    for i in tqdm(range(10)):
         h_rgb, h_depth, h_state, h_action, h_predict = [
             f.to(model.device, non_blocking=True) for f in next(loader)]
 
@@ -160,20 +160,39 @@ def main(argv):
         #     task._pyrep.step()
 
         # test
-        for t in range(400):  # hard-coded teting time 20s
-            rgb, depth, state = parse_obs(
-                task.get_observation(), device=model.device)
+        obs = task.get_observation()
+        for t in range(200):  # hard-coded teting time 10s
+            rgb, depth, state = parse_obs(obs, device=model.device)
             # print(rgb.shape, depth.shape, state.shape, sep='\n')
 
-            action, discrete, predict_pose = model.forward(
-                rgb, depth, state, batch_post_update[0])
+            # action, discrete, predict_pose = model.forward(
+            #     rgb, depth, state, batch_post_update[0])
+
+            conv_out = model.forward_conv(rgb, depth, batch_post_update[0])
+            predict_pose = model.forward_predict_pose(conv_out, batch_post_update[0])
+            fc_out = model.forward_fc(conv_out, predict_pose, state, batch_post_update[0])
+            action, discrete = model.forward_action(fc_out, batch_post_update[0])
+
             action = torch.cat(
                 (action, discrete), dim=1
             ).flatten().cpu().detach().numpy()
-            # print(predict_pose)
+            # print(t, action, predict_pose.flatten().cpu().detach().numpy())
+            print(t, action[-1])
+            # input()
+            if obs.gripper_open and action[-1] < 0.75:
+                action[-1] = 0.0
+            if obs.gripper_open < 0.95 and action[-1] > 0.25:
+                action[-1] = 1.0
             # print(action.shape, action)
 
+            # wps = task._task.get_waypoints()
+            # action = wps[0].get_waypoint_object().get_pose()
+            # action = np.append(action, 1.0)
+
             obs, _, terminate = task.step(action)
+            if terminate:
+                print(terminate)
+                break
             # print(obs.gripper_open)
 
         raise RuntimeError
