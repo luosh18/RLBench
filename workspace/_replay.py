@@ -11,13 +11,13 @@ from rlbench.tasks.pick_and_place import PickAndPlace
 
 
 # To use 'saved' demos, set the path below, and set live_demos=False
-live_demos = False
+live_demos = True
 DATASET = '' if live_demos else os.path.join(
     os.path.expanduser('~'), 'disk/rlbench_data')
 
 obs_config = ObservationConfig()
 # obs_config.set_all(True)
-obs_config.record_gripper_closing = False
+obs_config.record_gripper_closing = True
 
 env = Environment(
     action_mode=MoveArmThenGripper(arm_action_mode=JointVelocity(),
@@ -27,6 +27,10 @@ env = Environment(
     headless=False,
     robot_setup='jaco')
 env.launch()
+
+print(env._pyrep.get_simulation_timestep())
+env._pyrep.set_simulation_timestep(0.1)
+print(env._pyrep.get_simulation_timestep())
 
 task_env = env.get_task(PickAndPlace)
 

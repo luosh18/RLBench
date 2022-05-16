@@ -67,7 +67,7 @@ class PickAndPlace(Task):
     ARM_POS = np.array([-3.0895e-01, 0, +8.2002e-01])
     INIT_POS = [1.461442470550537, 1.7185994386672974, 4.47493839263916,
                 -0.13187171518802643, -2.4193673133850098, 0.6419594287872314]
-    WAYPOINT_POSE = np.zeros(6)
+    WAYPOINT_POSE = np.zeros(7)
 
     def __init__(self, pyrep: PyRep, robot: Robot, name: str = None):
         super().__init__(pyrep, robot, name)
@@ -123,8 +123,8 @@ class PickAndPlace(Task):
         self.spawned_objects.clear()
 
     def decorate_observation(self, observation: Observation) -> Observation:
-        observation.gripper_open = (
-            0.0 if len(self.robot.gripper.get_grasped_objects()) > 0 else 1.0)
+        if len(self.robot.gripper.get_grasped_objects()) > 0:
+            observation.gripper_open = 0.0
         poses = [self.pick_dummy.get_pose(),
                  self.place_dummy.get_pose(),
                  self.distractor_dummies[0].get_pose(),
@@ -238,7 +238,7 @@ class PickAndPlace(Task):
             i += 1
 
         # fix_orientation before check feasible
-        [fix_waypoint(p) for p in waypoints]
+        [fix_waypoint(p) for p in reversed(waypoints)]
         # Check if all of the waypoints are feasible
         feasible, way_i = self._feasible(waypoints)
         if not feasible:
