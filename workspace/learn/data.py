@@ -99,10 +99,15 @@ class SequentialDataset(Dataset):
         # imgs[0].save('tmp.gif', save_all=True,
         #              append_images=imgs[1:], duration=100, loop=0)
         # print(len(imgs))
-        ## remove gripper_open, may help gripper close? ##
+        ## for ee get the current tip position ##
         # print(sampled_demo['state'].shape, sampled_demo['state'][0], sep='\n')
         sampled_demo['state'] = np.take(
-            sampled_demo['state'], [0, 1, 2, 3, 4, 5, 7, 8, 9], axis=1)
+            sampled_demo['state'], [7, 8, 9], axis=1)
+        ## for ee, get the 3d position of waypoint ##
+        sampled_demo['action'] = np.concatenate((
+            np.take(sampled_demo['waypoint'], [0, 1, 2], axis=1),
+            np.take(sampled_demo['action'], [6], axis=1)
+        ), axis=1)
         # print(sampled_demo['state'].shape, sampled_demo['state'][0], sep='\n')
         return sampled_demo
 
@@ -133,8 +138,9 @@ def test_dataset(dataset: SequentialDataset):
     print('----- test_dataset -----')
     demos = [dataset[i] for i in range(0, 10)]
     # demos = [dataset[i] for i in range(500, 510)]
-    # for v in demos[0]:
-    #     print(v.shape)
+    for v, k in zip(demos[0], ['rgb', 'depth', 'state', 'action', 'predict']):
+        print(k, v.shape)
+        # print(v)
     # print(demos[0][0][-1])
     # print((demos[0][0] * 255)[-1])
 
