@@ -53,8 +53,8 @@ def parse_obs(obs: Observation, device):
         2, 0, 1) / 255.0    # rgb, remember to transpose
     depth = np.expand_dims(
         obs.left_shoulder_depth, axis=0)
-    state = np.concatenate(
-        (obs.joint_positions, [obs.gripper_open], obs.gripper_pose[:3]))
+    state = np.concatenate(  # remove gripper_open (it works!)
+        (obs.joint_positions, obs.gripper_pose[:3]))
     # skip action
     # DEBUG
     # img = rgb.transpose(1, 2, 0) * 255
@@ -88,7 +88,7 @@ def main(argv):
     # not using batch
     adapt_lr = FLAGS.adapt_lr
     num_updates = FLAGS.num_updates
-    mdn_samples = FLAGS.mdn_samples
+    # mdn_samples = FLAGS.mdn_samples
 
     logger.info('test with flags: %s' % str(FLAGS.flag_values_dict()))
 
@@ -161,7 +161,7 @@ def main(argv):
 
         # test
         obs = task.get_observation()
-        for t in range(200):  # hard-coded teting time 10s
+        for t in range(150):  # hard-coded teting time 15s
             rgb, depth, state = parse_obs(obs, device=model.device)
             # print(rgb.shape, depth.shape, state.shape, sep='\n')
 
@@ -178,10 +178,10 @@ def main(argv):
             ).flatten().cpu().detach().numpy()
             print(t, action, predict_pose.flatten().cpu().detach().numpy())
             # input()
-            if action[-1] < 0.90:
-                action[-1] = 0.0
-            elif action[-1] > 0.3:
-                action[-1] = 1.0
+            # if action[-1] < 0.90:
+            #     action[-1] = 0.0
+            # elif action[-1] > 0.3:
+            #     action[-1] = 1.0
             # print(action.shape, action)
 
             # wps = task._task.get_waypoints()
