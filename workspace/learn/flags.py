@@ -18,8 +18,6 @@ flags.DEFINE_integer('T', 50,
                      'time horizon of the demo videos -- 50 for reach, 100 for push, DAML to be determined')
 flags.DEFINE_float('simulation_timestep', 0.1,  # TODO: remember to set simulation_timestep while testing
                    'default 0.1 second for each frame')
-flags.DEFINE_integer('mdn_samples', 100,
-                     'sample "mdn_samples" actions from MDN and choose the one with highest probability')
 flags.DEFINE_float('adapt_lr', '0.005',
                    'step size alpha for inner gradient update -- 0.005 for p&p')
 flags.DEFINE_string('dataset_root', '/home/cscg-east92007/disk/dataset',
