@@ -17,7 +17,7 @@ DATASET = '' if live_demos else os.path.join(
 
 obs_config = ObservationConfig()
 # obs_config.set_all(True)
-obs_config.record_gripper_closing = True
+obs_config.record_gripper_closing = False
 
 env = Environment(
     action_mode=MoveArmThenGripper(arm_action_mode=JointVelocity(),
@@ -41,6 +41,7 @@ def fn(v=0):
     demos = task_env.get_demos(
         1, live_demos, random_selection=False, from_episode_number=0)
     demo = demos[0]
+    print(len(demo))
     task_env.reset()
 
     # task = PickAndPlace()

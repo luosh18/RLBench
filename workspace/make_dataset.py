@@ -31,6 +31,8 @@ flags.DEFINE_integer('episodes_per_task', 10,
                      'The number of episodes to collect per task.')
 flags.DEFINE_integer('variations', -1,
                      'Number of variations to collect per task. -1 for all.')
+flags.DEFINE_float('simulation_timestep', 0.05,
+                   'default 0.05 second for each frame')
 
 
 def check_and_make(dir):
@@ -76,6 +78,7 @@ def process_demo(demo):
     # get needed data
     contact_frame = 0
     rgb, depth, state, action = [], [], [], []
+    waypoint = []
     gif_frames = []
     # for each observation (frame) (sliding window: 2)
     for i, obs in enumerate(demo[1:]):
@@ -88,6 +91,7 @@ def process_demo(demo):
             np.concatenate((pre_obs.joint_positions, [pre_obs.gripper_open], pre_obs.gripper_pose[:3])))
         action.append(  # action (joint velocity, gripper_open)
             np.concatenate((obs.joint_velocities, [obs.gripper_open])))
+        waypoint.append(obs.misc['waypoint_pose'])
         gif_frames.append(Image.fromarray(pre_obs.left_shoulder_rgb))
         # find the frame when gripper contact the target obj
         if (not contact_frame > 0) and (obs.gripper_open == 0.0):
@@ -102,6 +106,7 @@ def process_demo(demo):
         'state': np.array(state),
         'action': np.array(action),
         'predict': np.array(predict_pos),
+        'waypoint': np.array(waypoint),
     }
     # for name in processed_demo:
     #     print(name,  processed_demo[name][contact_frame].shape)
@@ -115,7 +120,7 @@ def save_demo(processed_demo, gif_frames, example_path):
         pickle.dump(processed_demo, f)
     gif_frames[0].save(os.path.join(example_path, 'ref.gif'),
                        save_all=True, append_images=gif_frames[1:],
-                       optimize=False, duration=100, loop=0)
+                       optimize=False, duration=FLAGS.simulation_timestep*1000, loop=0)
 
 
 def run(i, lock, task_index, variation_count, results, file_lock, tasks):
@@ -132,6 +137,8 @@ def run(i, lock, task_index, variation_count, results, file_lock, tasks):
         headless=True,
         robot_setup='jaco')
     rlbench_env.launch()
+
+    rlbench_env._pyrep.set_simulation_timestep(FLAGS.simulation_timestep)
 
     task_env = None
 
