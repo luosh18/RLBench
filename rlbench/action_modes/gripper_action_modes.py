@@ -83,5 +83,8 @@ class StepDiscrete(Discrete):
 
     def _actuate(self, action, scene):
         for _ in range(self.steps):
-            if scene.robot.gripper.actuate(action, velocity=0.2):
+            done = scene.robot.gripper.actuate(action, velocity=1.0)
+            scene.pyrep.step()
+            scene.task.step()
+            if done:
                 break

@@ -192,7 +192,7 @@ class PickAndPlace(Task):
             self.pick_boundary.sample(self.pick_dummy)
             self.place_boundary.clear()
             for dummy in [self.place_dummy] + self.distractor_dummies:
-                self.place_boundary.sample(dummy, min_distance=0.175)
+                self.place_boundary.sample(dummy, min_distance=0.14)
         else:
             for pose, dummy in zip(poses, [self.pick_dummy, self.place_dummy] + self.distractor_dummies):
                 dummy.set_pose(pose)
