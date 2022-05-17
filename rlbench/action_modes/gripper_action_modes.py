@@ -74,3 +74,14 @@ class Discrete(GripperActionMode):
 
     def action_shape(self, scene: Scene) -> tuple:
         return 1,
+
+
+class StepDiscrete(Discrete):
+    def __init__(self, attach_grasped_objects: bool = True, detach_before_open: bool = True, steps=1):
+        super().__init__(attach_grasped_objects, detach_before_open)
+        self.steps = steps
+
+    def _actuate(self, action, scene):
+        for _ in range(self.steps):
+            if scene.robot.gripper.actuate(action, velocity=0.2):
+                break
