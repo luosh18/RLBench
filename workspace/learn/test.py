@@ -1,5 +1,7 @@
+import math
 import os
 from collections import OrderedDict
+from enum import Enum
 
 import numpy as np
 import torch
@@ -66,6 +68,12 @@ def parse_obs(obs: Observation, device):
     )
 
 
+class Result(Enum):
+    SUCCESS = 1  # success before deadline. i.e. model released the gripper
+    FAILED = 2
+    FORCED = 3  # success after deadline. i.e. model didn't release the gripper
+
+
 def main(argv):
     save_dir = FLAGS.save_dir
     if not os.path.exists(save_dir):
@@ -83,7 +91,8 @@ def main(argv):
     adapt_lr = FLAGS.adapt_lr
     num_updates = FLAGS.num_updates
     # mdn_samples = FLAGS.mdn_samples  # not using mdn
-    trials = FLAGS.trials
+    test_time = math.ceil(FLAGS.test_time / FLAGS.simulation_timestep)
+    print(test_time)
 
     logger.info('test with flags: %s' % str(FLAGS.flag_values_dict()))
 
@@ -91,7 +100,7 @@ def main(argv):
     obs_config = get_obs_config()
     env = Environment(
         action_mode=MoveArmThenGripper(arm_action_mode=JointPosition(False),
-                                       gripper_action_mode=StepDiscrete(1)),
+                                       gripper_action_mode=StepDiscrete(steps=10)),
         obs_config=obs_config,
         headless=False,
         robot_setup='jaco')
@@ -112,6 +121,9 @@ def main(argv):
     meta_optimizer = torch.optim.Adam(model.parameters())
     load_model(model, meta_optimizer, FLAGS.iteration)
 
+    # counters
+    num_success = num_failed = num_forced = 0
+
     for i in tqdm(range(dataset_len)):
         h_rgb, h_depth, h_state, h_action, h_predict = [
             f.to(model.device, non_blocking=True) for f in next(loader)]
@@ -129,53 +141,72 @@ def main(argv):
         # load task env
         v, e = dataset.get_v_e(i)
         task.set_variation(v)
+        task.reset()
+        obs = task.get_observation()
 
-        for tri in range(trials):
-            task.reset()
-            obs = task.get_observation()
+        pick_error = []  # record distance between predict_pose and pick target
+        place_error = []  # record distance between predict_pose and place target
+        gripper = []  # record gripper action
 
-            for t in range(150):  # hard-coded teting time 15s
-                rgb, depth, state = parse_obs(obs, device=model.device)
+        for t in range(test_time):
+            rgb, depth, state = parse_obs(obs, device=model.device)
 
-                # action, discrete, predict_pose = model.forward(
-                #     rgb, depth, state, batch_post_update[0])
-                # manual forward
-                conv_out = model.forward_conv(rgb, depth, batch_post_update[0])
-                predict_pose = model.forward_predict_pose(
-                    conv_out, batch_post_update[0])
-                fc_out = model.forward_fc(
-                    conv_out, predict_pose, state, batch_post_update[0])
-                action, discrete = model.forward_action(
-                    fc_out, batch_post_update[0])
+            # action, discrete, predict_pose = model.forward(
+            #     rgb, depth, state, batch_post_update[0])
+            # manual forward
+            conv_out = model.forward_conv(rgb, depth, batch_post_update[0])
+            predict_pose = model.forward_predict_pose(
+                conv_out, batch_post_update[0])
+            fc_out = model.forward_fc(
+                conv_out, predict_pose, state, batch_post_update[0])
+            action, discrete = model.forward_action(
+                fc_out, batch_post_update[0])
 
-                action = torch.cat(
-                    (action, discrete), dim=1
-                ).detach().flatten().cpu().numpy()
-                # print(t, action, predict_pose.flatten().cpu().detach().numpy())
-                gripper_action = action[-1]
-                action *= FLAGS.simulation_timestep
-                action[-1] = gripper_action
+            action = torch.cat(
+                (action, discrete), dim=1
+            ).detach().flatten().cpu().numpy()
+            # print(t, action, predict_pose.flatten().cpu().detach().numpy())
+            gripper_action = action[-1]
+            action *= FLAGS.simulation_timestep
+            action[-1] = gripper_action
 
-                obs, _, terminate = task.step(action)
+            obs, _, terminate = task.step(action)
 
-                del conv_out, predict_pose, fc_out, action, discrete
+            predict = predict_pose.detach().flatten().cpu().numpy()
+            waypoints = task._task.get_waypoints()
+            pick_target = waypoints[0].get_waypoint_object().get_position()
+            place_target = waypoints[2].get_waypoint_object().get_position()
+            pick_error.append(np.linalg.norm(predict - pick_target))
+            place_error.append(np.linalg.norm(predict - place_target))
+            gripper.append(float(action[-1]))
 
-                if terminate:  # task success
-                    # TODO: log: success before deadline
-                    break
-                # print(obs.gripper_open)
+            del conv_out, predict_pose, fc_out, action, discrete
 
-            if not terminate:
-                act = np.zeros(FLAGS.action_size)
-                act[-1] = 1.0  # release gripper
-                obs, _, terminate = task.step(act)
-                # TODO: log: terminate after release or not
-                input('he')
-                raise RuntimeError
+            if terminate:  # task success
+                result = Result.SUCCESS
+                break
+            # print(obs.gripper_open)
+
+        if not terminate:
+            act = np.zeros(FLAGS.action_size)
+            act[-1] = 1.0  # release gripper
+            obs, _, terminate = task.step(act)
+            result = Result.FORCED if terminate else Result.FAILED
+
+        logger.info('%d v %d e %d result %s' % (i, v, e, result))
+        logger.info('%d v %d e %d pick_error %s' % (i, v, e, pick_error))
+        logger.info('%d v %d e %d place_error %s' % (i, v, e, place_error))
+        logger.info('%d v %d e %d gripper %s' % (i, v, e, gripper))
+        num_success += 1 if result == Result.SUCCESS else 0
+        num_failed += 1 if result == Result.FAILED else 0
+        num_forced += 1 if result == Result.FORCED else 0
+        print('success rate:', (num_success + num_forced) /
+              (num_success + num_failed + num_forced))
 
         del pre_update, batch_post_update
 
-    # TODO: log: done
+    logger.info('success %d failed %d forced %d' % (num_success, num_failed, num_forced))
+
     env.shutdown()
 
 
