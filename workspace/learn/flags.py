@@ -24,6 +24,8 @@ flags.DEFINE_string('dataset_root', '/home/cscg-east92007/disk/dataset',
                     'roor directory of saved dataset')
 flags.DEFINE_string('task_name', 'pick_and_place',
                     'task name (rlbench) not need to change?')
+flags.DEFINE_integer('trials', 5,
+                     'trails per adaptation during testing')
 
 # Training Options
 flags.DEFINE_integer('dataset_seed', 42,

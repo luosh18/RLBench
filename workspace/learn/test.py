@@ -6,8 +6,8 @@ import torch
 from absl import app
 from PIL import Image
 from rlbench.action_modes.action_mode import MoveArmThenGripper
-from rlbench.action_modes.arm_action_modes import JointVelocity
-from rlbench.action_modes.gripper_action_modes import Discrete
+from rlbench.action_modes.arm_action_modes import JointPosition, JointVelocity
+from rlbench.action_modes.gripper_action_modes import Discrete, StepDiscrete
 from rlbench.backend.observation import Observation
 from rlbench.environment import Environment
 from rlbench.observation_config import ObservationConfig
@@ -56,12 +56,6 @@ def parse_obs(obs: Observation, device):
     state = np.concatenate(  # remove gripper_open (it works!)
         (obs.joint_positions, obs.gripper_pose[:3]))
     # skip action
-    # DEBUG
-    # img = rgb.transpose(1, 2, 0) * 255
-    # print(img.shape)
-    # img = Image.fromarray(np.uint8(img))
-    # img.show()
-    # input('parse_obs')
     return (
         torch.tensor(np.expand_dims(rgb, 0),
                      dtype=torch.float32, device=device),
@@ -88,15 +82,16 @@ def main(argv):
     # not using batch
     adapt_lr = FLAGS.adapt_lr
     num_updates = FLAGS.num_updates
-    # mdn_samples = FLAGS.mdn_samples
+    # mdn_samples = FLAGS.mdn_samples  # not using mdn
+    trials = FLAGS.trials
 
     logger.info('test with flags: %s' % str(FLAGS.flag_values_dict()))
 
     # env
     obs_config = get_obs_config()
     env = Environment(
-        action_mode=MoveArmThenGripper(arm_action_mode=JointVelocity(),
-                                       gripper_action_mode=Discrete()),
+        action_mode=MoveArmThenGripper(arm_action_mode=JointPosition(False),
+                                       gripper_action_mode=StepDiscrete(1)),
         obs_config=obs_config,
         headless=False,
         robot_setup='jaco')
@@ -117,88 +112,70 @@ def main(argv):
     meta_optimizer = torch.optim.Adam(model.parameters())
     load_model(model, meta_optimizer, FLAGS.iteration)
 
-    for i in tqdm(range(10)):
+    for i in tqdm(range(dataset_len)):
         h_rgb, h_depth, h_state, h_action, h_predict = [
             f.to(model.device, non_blocking=True) for f in next(loader)]
 
-        # DEBUG
-        # img = h_rgb[0][0].clone().detach().cpu().numpy().transpose(1, 2, 0) * 255
-        # print(img.shape)
-        # img = Image.fromarray(np.uint8(img))
-        # img.show()
-        # input()
-        # raise RuntimeError
-
-        model.zero_grad()
-
         # adapt
+        model.zero_grad()
         pre_update = OrderedDict(
             model.meta_named_parameters())  # pre-update params
         batch_post_update, adapt_losses = model.adapt(
             h_rgb, h_depth, pre_update, adapt_lr, num_updates
         )  # adaptation (get post-update params)
-        logger.info('%d adapt-loss %s' % (
-            i, adapt_losses.tolist()))
+        logger.info('%d adapt-loss %s' % (i, adapt_losses.tolist()))
+        del adapt_losses
 
         # load task env
         v, e = dataset.get_v_e(i)
         task.set_variation(v)
-        task.reset()
-        # x = input('step_ui')
-        # env._robot.arm.set_joint_positions(
-        #     [1.0296657085418701, 1.869177222251892, 4.730264663696289, -
-        #         0.334658145904541, -1.8943476676940918, 0.22506999969482422],
-        #     True
-        # )
 
-        # DEBUG
-        # for action in h_action[0]:
-        #     print(action.shape)
-        #     task.step(action.cpu().detach().flatten().numpy())
-        # for state in h_state[0]:
-        #     task._robot.arm.set_joint_positions(state[:6].tolist(), True)
-        #     task._pyrep.step()
+        for tri in range(trials):
+            task.reset()
+            obs = task.get_observation()
 
-        # test
-        obs = task.get_observation()
-        for t in range(150):  # hard-coded teting time 15s
-            rgb, depth, state = parse_obs(obs, device=model.device)
-            # print(rgb.shape, depth.shape, state.shape, sep='\n')
+            for t in range(150):  # hard-coded teting time 15s
+                rgb, depth, state = parse_obs(obs, device=model.device)
 
-            # action, discrete, predict_pose = model.forward(
-            #     rgb, depth, state, batch_post_update[0])
+                # action, discrete, predict_pose = model.forward(
+                #     rgb, depth, state, batch_post_update[0])
+                # manual forward
+                conv_out = model.forward_conv(rgb, depth, batch_post_update[0])
+                predict_pose = model.forward_predict_pose(
+                    conv_out, batch_post_update[0])
+                fc_out = model.forward_fc(
+                    conv_out, predict_pose, state, batch_post_update[0])
+                action, discrete = model.forward_action(
+                    fc_out, batch_post_update[0])
 
-            conv_out = model.forward_conv(rgb, depth, batch_post_update[0])
-            predict_pose = model.forward_predict_pose(
-                conv_out, batch_post_update[0])
-            fc_out = model.forward_fc(
-                conv_out, predict_pose, state, batch_post_update[0])
-            action, discrete = model.forward_action(
-                fc_out, batch_post_update[0])
+                action = torch.cat(
+                    (action, discrete), dim=1
+                ).detach().flatten().cpu().numpy()
+                # print(t, action, predict_pose.flatten().cpu().detach().numpy())
+                gripper_action = action[-1]
+                action *= FLAGS.simulation_timestep
+                action[-1] = gripper_action
 
-            action = torch.cat(
-                (action, discrete), dim=1
-            ).flatten().cpu().detach().numpy()
-            print(t, action, predict_pose.flatten().cpu().detach().numpy())
-            # input()
-            # if action[-1] < 0.90:
-            #     action[-1] = 0.0
-            # elif action[-1] > 0.3:
-            #     action[-1] = 1.0
-            # print(action.shape, action)
+                obs, _, terminate = task.step(action)
 
-            # wps = task._task.get_waypoints()
-            # action = wps[0].get_waypoint_object().get_pose()
-            # action = np.append(action, 1.0)
+                del conv_out, predict_pose, fc_out, action, discrete
 
-            obs, _, terminate = task.step(action)
-            if terminate:
-                print(terminate)
-                break
-            # print(obs.gripper_open)
+                if terminate:  # task success
+                    # TODO: log: success before deadline
+                    break
+                # print(obs.gripper_open)
 
-        raise RuntimeError
+            if not terminate:
+                act = np.zeros(FLAGS.action_size)
+                act[-1] = 1.0  # release gripper
+                obs, _, terminate = task.step(act)
+                # TODO: log: terminate after release or not
+                input('he')
+                raise RuntimeError
 
+        del pre_update, batch_post_update
+
+    # TODO: log: done
     env.shutdown()
 
 
