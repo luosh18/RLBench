@@ -28,7 +28,7 @@ MODEL_FOLDER = 'model'
 class Daml(MetaModule):
     def __init__(self) -> None:
         super().__init__()
-        self.state_size = FLAGS.state_size
+        self.state_size = FLAGS.state_size + (1 if FLAGS.gripper_action else 0)
         self.action_size = FLAGS.action_size
         self.inner_clip = FLAGS.inner_clip
         self.device = torch.device(
@@ -413,7 +413,7 @@ def test_forward(model: Daml):
     im_width = FLAGS.im_width
     im_height = FLAGS.im_height
     num_channels = FLAGS.num_channels
-    state_size = FLAGS.state_size
+    state_size = FLAGS.state_size + (1 if FLAGS.gripper_action else 0)
     action_size = FLAGS.action_size
     # mdn_samples = FLAGS.mdn_samples
 
@@ -435,7 +435,7 @@ def test_adapt_meta(model: Daml):
     im_width = FLAGS.im_width
     im_height = FLAGS.im_height
     num_channels = FLAGS.num_channels
-    state_size = FLAGS.state_size
+    state_size = FLAGS.state_size + (1 if FLAGS.gripper_action else 0)
     action_size = FLAGS.action_size
     predict_size = FLAGS.predict_size
     T = FLAGS.T

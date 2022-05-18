@@ -1,14 +1,15 @@
 import os
 import pickle
-from os.path import exists, join
 from collections import OrderedDict
+from os.path import exists, join
 
-import torch
 import numpy as np
+import torch
+from absl import app
+from PIL import Image
 from rlbench.backend.const import *
 from torch.utils.data import DataLoader, Dataset, Sampler
-
-from PIL import Image
+from workspace.learn.flags import FLAGS
 
 
 class SequentialDataset(Dataset):
@@ -99,10 +100,13 @@ class SequentialDataset(Dataset):
         # imgs[0].save('tmp.gif', save_all=True,
         #              append_images=imgs[1:], duration=100, loop=0)
         # print(len(imgs))
-        ## remove gripper_open, may help gripper close? ##
         # print(sampled_demo['state'].shape, sampled_demo['state'][0], sep='\n')
-        sampled_demo['state'] = np.take(
-            sampled_demo['state'], [0, 1, 2, 3, 4, 5, 7, 8, 9], axis=1)
+        if not FLAGS.gripper_action:  # remove gripper_open, help gripper close
+            sampled_demo['state'] = np.take(
+                sampled_demo['state'], [0, 1, 2, 3, 4, 5, 7, 8, 9], axis=1)
+        if FLAGS.gripper_action:  # use fixed gripper action
+            for action, gripper in zip(sampled_demo['action'], sampled_demo['gripper_action']):
+                action[-1] = gripper[0]
         # print(sampled_demo['state'].shape, sampled_demo['state'][0], sep='\n')
         return sampled_demo
 
@@ -131,7 +135,7 @@ class PairDataset(SequentialDataset):
 
 def test_dataset(dataset: SequentialDataset):
     print('----- test_dataset -----')
-    demos = [dataset[i] for i in range(0, 10)]
+    demos = [dataset[i] for i in range(0, 2)]
     # demos = [dataset[i] for i in range(500, 510)]
     # for v in demos[0]:
     #     print(v.shape)
@@ -158,12 +162,16 @@ def test_dataloader(dataset: SequentialDataset, randdataset: PairDataset):
                 print(v.is_pinned(), v.shape)
 
 
-if __name__ == '__main__':
-    dataset_root = join(os.path.expanduser('~'), 'disk/dataset_ee')
-    task_name = 'pick_and_place'
-    batch_size = 4
-    frames = 50
-    dataset = SequentialDataset(dataset_root, task_name, frames, 0, True)
+def main(argv):
+    dataset_root = FLAGS.dataset_root
+    task_name = FLAGS.task_name
+    meta_batch_size = FLAGS.meta_batch_size
+    T = FLAGS.T
+    dataset = SequentialDataset(dataset_root, task_name, T, 0, True)
     test_dataset(dataset)
-    randdataset = PairDataset(dataset_root, task_name, frames, 0, True, True)
+    randdataset = PairDataset(dataset_root, task_name, T, 0, True, True)
     # test_dataloader(dataset, randdataset)
+
+
+if __name__ == '__main__':
+    app.run(main)
