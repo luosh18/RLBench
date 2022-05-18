@@ -53,12 +53,10 @@ def _fix_orientation(point: Object) -> np.ndarray:
     point.set_orientation(
         [math.radians(-90), rotation + rotation_fix, math.radians(-90)])
     point.rotate([0, math.radians(-12), 0])
-    return point.get_orientation()
-
+    return point.get_pose()
 
 def fix_waypoint(waypoint: Point, update=True) -> np.ndarray:
-    _fix_orientation(waypoint.get_waypoint_object())
-    pose = waypoint.get_waypoint_object().get_pose()
+    pose = _fix_orientation(waypoint.get_waypoint_object())
     if update:
         PickAndPlace.WAYPOINT_POSE = pose
     return pose
@@ -75,6 +73,7 @@ class PickAndPlace(Task):
         self._loaded_dataset_config = False
 
     def init_task(self) -> None:
+        self.useful = Dummy('useful')
         self.pick_dummy = Dummy('pick_dummy')
         self.place_dummy = Dummy('place_dummy')
         self.distractor_dummies = [
@@ -203,6 +202,12 @@ class PickAndPlace(Task):
         self.object_poses = [obj.get_pose() for obj in
                              [self.pick_dummy, self.place_dummy] + self.distractor_dummies]
         return self.object_poses
+
+    def get_fixed_orientation(self, pos: np.ndarray) -> np.ndarray:
+        pt = self.useful
+        pt.set_position(pos)
+        pose = _fix_orientation(pt)
+        return pose
 
     def _get_waypoints(self, validating=False) -> List[Waypoint]:
         waypoint_name = 'waypoint%d'

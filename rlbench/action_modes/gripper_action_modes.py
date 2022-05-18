@@ -67,11 +67,11 @@ class Discrete(GripperActionMode):
                 scene.robot.gripper.release()
             if self._detach_before_open:
                 self._actuate(action, scene)
-            if action == 1.0:
-                # Step a few more times to allow objects to drop
-                for _ in range(10):
-                    scene.pyrep.step()
-                    scene.task.step()
+            # if action == 1.0:
+            #     # Step a few more times to allow objects to drop
+            #     for _ in range(10):
+            #         scene.pyrep.step()
+            #         scene.task.step()
 
     def action_shape(self, scene: Scene) -> tuple:
         return 1,
