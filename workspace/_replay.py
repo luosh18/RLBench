@@ -3,7 +3,7 @@ import numpy as np
 
 from rlbench.action_modes.action_mode import MoveArmThenGripper
 from rlbench.action_modes.arm_action_modes import JointVelocity
-from rlbench.action_modes.gripper_action_modes import Discrete
+from rlbench.action_modes.gripper_action_modes import Discrete, StepDiscrete
 from rlbench.backend.observation import Observation
 from rlbench.environment import Environment
 from rlbench.observation_config import ObservationConfig
@@ -17,11 +17,11 @@ DATASET = '' if live_demos else os.path.join(
 
 obs_config = ObservationConfig()
 # obs_config.set_all(True)
-obs_config.record_gripper_closing = False
+obs_config.record_gripper_closing = True
 
 env = Environment(
     action_mode=MoveArmThenGripper(arm_action_mode=JointVelocity(),
-                                   gripper_action_mode=Discrete()),
+                                   gripper_action_mode=StepDiscrete()),
     dataset_root=DATASET,
     obs_config=obs_config,
     headless=False,
@@ -54,11 +54,14 @@ def fn(v=0):
     env._pyrep.step_ui()
     for observation in demo:
         # observation = Observation()
-        print(observation.joint_velocities)
-        print(observation.gripper_open)
+        # print(observation.joint_velocities)
+        # print(observation.gripper_open)
         task_env.step(np.concatenate(
-            [observation.joint_velocities, [observation.gripper_open]]))
-
+            [observation.joint_velocities, [observation.misc['gripper_action']]]))
+        obs = task_env.get_observation()
+        print(observation.gripper_open, observation.misc['gripper_action'], obs.gripper_open, obs.misc['gripper_action'])
+        if input() == 'q':
+            break
 
 if __name__ == '__main__':
     while True:

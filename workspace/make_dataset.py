@@ -49,7 +49,7 @@ def get_obs_config() -> ObservationConfig:
     obs_config.set_all(True)
 
     obs_config.gripper_touch_forces = False  # jaco has no touch sensors
-    obs_config.record_gripper_closing = False
+    obs_config.record_gripper_closing = True  # new dataset
 
     obs_config.right_shoulder_camera.image_size = img_size
     obs_config.left_shoulder_camera.image_size = img_size
@@ -79,6 +79,7 @@ def process_demo(demo):
     contact_frame = 0
     rgb, depth, state, action = [], [], [], []
     waypoint = []
+    gripper_action = []
     gif_frames = []
     # for each observation (frame) (sliding window: 2)
     for i, obs in enumerate(demo[1:]):
@@ -92,6 +93,8 @@ def process_demo(demo):
         action.append(  # action (joint velocity, gripper_open)
             np.concatenate((obs.joint_velocities, [obs.gripper_open])))
         waypoint.append(obs.misc['waypoint_pose'])
+        gripper_action.append(
+            np.array([pre_obs.misc['gripper_action']]))
         gif_frames.append(Image.fromarray(pre_obs.left_shoulder_rgb))
         # find the frame when gripper contact the target obj
         if (not contact_frame > 0) and (obs.gripper_open == 0.0):
@@ -107,6 +110,7 @@ def process_demo(demo):
         'action': np.array(action),
         'predict': np.array(predict_pos),
         'waypoint': np.array(waypoint),
+        'gripper_action': np.array(gripper_action),
     }
     # for name in processed_demo:
     #     print(name,  processed_demo[name][contact_frame].shape)
