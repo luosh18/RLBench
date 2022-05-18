@@ -20,8 +20,10 @@ from rlbench.noise_model import NoiseModel
 from rlbench.observation_config import ObservationConfig, CameraConfig
 
 STEPS_BEFORE_EPISODE_START = 10
-ACTUATE_SPEED = 0.1
+ACTUATE_SPEED = 1.2
+ACTUATE_LIMIT = 5
 
+from pyrep.robots.end_effectors.gripper import OPENING, CLOSING
 
 class Scene(object):
     """Controls what is currently in the vrep scene. This is used for making
@@ -321,6 +323,8 @@ class Scene(object):
                  randomly_place: bool = True) -> Demo:
         """Returns a demo (list of observations)"""
 
+        self.robot.gripper.action = OPENING
+
         if not self._has_init_task:
             self.init_task()
         if not self._has_init_episode:
@@ -377,42 +381,50 @@ class Scene(object):
                     start_of_bracket = -1
                     gripper = self.robot.gripper
                     if 'open_gripper(' in ext:
+                        gripper.action = OPENING
                         gripper.release()
                         start_of_bracket = ext.index('open_gripper(') + 13
                         contains_param = ext[start_of_bracket] != ')'
                         if not contains_param:
                             done = False
+                            counts = 0
                             while not done:
                                 done = gripper.actuate(1.0, ACTUATE_SPEED)
                                 self.pyrep.step()
                                 self.task.step()
-                                if self._obs_config.record_gripper_closing:
+                                if self._obs_config.record_gripper_closing and (counts < ACTUATE_LIMIT):
                                     self._demo_record_step(
                                         demo, record, callable_each_step)
+                                counts += 1
                     elif 'close_gripper(' in ext:
+                        gripper.action = CLOSING
                         start_of_bracket = ext.index('close_gripper(') + 14
                         contains_param = ext[start_of_bracket] != ')'
                         if not contains_param:
                             done = False
+                            counts = 0
                             while not done:
                                 done = gripper.actuate(0.0, ACTUATE_SPEED)
                                 self.pyrep.step()
                                 self.task.step()
-                                if self._obs_config.record_gripper_closing:
+                                if self._obs_config.record_gripper_closing and (counts < ACTUATE_LIMIT):
                                     self._demo_record_step(
                                         demo, record, callable_each_step)
+                                counts += 1
 
                     if contains_param:
                         rest = ext[start_of_bracket:]
                         num = float(rest[:rest.index(')')])
                         done = False
+                        counts = 0
                         while not done:
                             done = gripper.actuate(num, ACTUATE_SPEED)
                             self.pyrep.step()
                             self.task.step()
-                            if self._obs_config.record_gripper_closing:
+                            if self._obs_config.record_gripper_closing and (counts < ACTUATE_LIMIT):
                                 self._demo_record_step(
                                     demo, record, callable_each_step)
+                            counts += 1
 
                     if 'close_gripper(' in ext:
                         for g_obj in self.task.get_graspable_objects():

@@ -26,6 +26,9 @@ flags.DEFINE_string('task_name', 'pick_and_place',
                     'task name (rlbench) not need to change?')
 flags.DEFINE_integer('test_time', 15,
                      'time duration limit during testing (in second)')
+flags.DEFINE_bool('gripper_action', False,
+                  'use fixed gripper action for training, do not change state_size, this well auto-increase it')
+
 
 # Training Options
 flags.DEFINE_integer('dataset_seed', 42,

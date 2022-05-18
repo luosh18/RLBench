@@ -52,6 +52,7 @@ class Discrete(GripperActionMode):
             x > 0.9 for x in scene.robot.gripper.get_open_amount())
         current_ee = 1.0 if open_condition else 0.0
         action = float(action[0] > 0.5)
+        scene.robot.gripper.action = action  # update gripper state
 
         if current_ee != action:
             done = False

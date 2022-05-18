@@ -12,6 +12,7 @@ from pyrep.objects.dummy import Dummy
 from pyrep.objects.object import Object
 from pyrep.objects.proximity_sensor import ProximitySensor
 from pyrep.objects.shape import Shape
+from pyrep.robots.end_effectors.gripper import CLOSING, OPENING
 from rlbench.backend.conditions import DetectedCondition, NothingGrasped
 from rlbench.backend.exceptions import WaypointError
 from rlbench.backend.observation import Observation
@@ -123,14 +124,17 @@ class PickAndPlace(Task):
         self.spawned_objects.clear()
 
     def decorate_observation(self, observation: Observation) -> Observation:
-        if len(self.robot.gripper.get_grasped_objects()) > 0:
-            observation.gripper_open = 0.0
+        if self.robot.gripper.action == CLOSING:
+            observation.gripper_open = (  # object attached then set to 0
+                CLOSING if len(self.robot.gripper.get_grasped_objects()) > 0
+                else OPENING)
         poses = [self.pick_dummy.get_pose(),
                  self.place_dummy.get_pose(),
                  self.distractor_dummies[0].get_pose(),
                  self.distractor_dummies[1].get_pose()]
         observation.misc['poses'] = poses
         observation.misc['waypoint_pose'] = PickAndPlace.WAYPOINT_POSE
+        observation.misc['gripper_action'] = self.robot.gripper.action
         return observation
 
     def get_low_dim_state(self) -> np.ndarray:
