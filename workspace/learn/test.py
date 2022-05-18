@@ -2,13 +2,14 @@ import math
 import os
 from collections import OrderedDict
 from enum import Enum
+from turtle import speed
 
 import numpy as np
 import torch
 from absl import app
 from PIL import Image
 from rlbench.action_modes.action_mode import MoveArmThenGripper
-from rlbench.action_modes.arm_action_modes import JointPosition, JointVelocity
+from rlbench.action_modes.arm_action_modes import EndEffectorPoseViaIK, JointPosition, JointVelocity
 from rlbench.action_modes.gripper_action_modes import Discrete, StepDiscrete
 from rlbench.backend.observation import Observation
 from rlbench.environment import Environment
@@ -55,8 +56,19 @@ def parse_obs(obs: Observation, device):
         2, 0, 1) / 255.0    # rgb, remember to transpose
     depth = np.expand_dims(
         obs.left_shoulder_depth, axis=0)
-    state = np.concatenate(  # remove gripper_open (it works!)
-        (obs.joint_positions, obs.gripper_pose[:3]))
+    if FLAGS.gripper_action:
+        if FLAGS.state_size == 3:
+            state = np.concatenate(
+                (obs.joint_positions, [obs.gripper_open], obs.gripper_pose[:3]))
+        else:
+            state = np.concatenate(
+                ([obs.gripper_open], obs.gripper_pose[:3]))
+    else:
+        if FLAGS.state_size == 3:
+            state = obs.gripper_pose[:3]
+        else:
+            state = np.concatenate(  # remove gripper works!
+                (obs.joint_positions, obs.gripper_pose[:3]))
     # skip action
     return (
         torch.tensor(np.expand_dims(rgb, 0),
@@ -99,7 +111,7 @@ def main(argv):
     # env
     obs_config = get_obs_config()
     env = Environment(
-        action_mode=MoveArmThenGripper(arm_action_mode=JointPosition(False),
+        action_mode=MoveArmThenGripper(arm_action_mode=EndEffectorPoseViaIK(),
                                        gripper_action_mode=StepDiscrete(steps=10)),
         obs_config=obs_config,
         headless=False,
@@ -162,13 +174,20 @@ def main(argv):
             action, discrete = model.forward_action(
                 fc_out, batch_post_update[0])
 
-            action = torch.cat(
-                (action, discrete), dim=1
-            ).detach().flatten().cpu().numpy()
-            # print(t, action, predict_pose.flatten().cpu().detach().numpy())
-            gripper_action = action[-1]
-            action *= FLAGS.simulation_timestep
-            action[-1] = gripper_action
+            tip_position = obs.gripper_pose[:3]
+            end_position = action.detach().flatten().cpu().numpy()
+            delta = end_position - tip_position
+            distance = np.linalg.norm(delta)
+            max_distance = 0.012  # restrict ||delta pos||_2
+            if np.linalg.norm(delta) > (2 * np.linalg.norm(delta * max_distance / distance)):
+                delta = delta * max_distance / distance
+            else:
+                delta *= 0.5
+
+            target = task._task.get_fixed_orientation(tip_position + delta)
+
+            action = np.concatenate(
+                (target, discrete.detach().flatten().cpu().numpy()), axis=0)
 
             obs, _, terminate = task.step(action)
 
@@ -180,7 +199,7 @@ def main(argv):
             place_error.append(np.linalg.norm(predict - place_target))
             gripper.append(float(action[-1]))
 
-            del conv_out, predict_pose, fc_out, action, discrete
+            del conv_out, predict_pose, fc_out, discrete
 
             if terminate:  # task success
                 result = Result.SUCCESS
@@ -189,6 +208,8 @@ def main(argv):
 
         if not terminate:
             act = np.zeros(FLAGS.action_size)
+            if FLAGS.action_size == 4:
+                act = action
             act[-1] = 1.0  # release gripper
             obs, _, terminate = task.step(act)
             result = Result.FORCED if terminate else Result.FAILED
@@ -205,7 +226,8 @@ def main(argv):
 
         del pre_update, batch_post_update
 
-    logger.info('success %d failed %d forced %d' % (num_success, num_failed, num_forced))
+    logger.info('success %d failed %d forced %d' %
+                (num_success, num_failed, num_forced))
 
     env.shutdown()
 
