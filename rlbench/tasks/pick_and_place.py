@@ -73,7 +73,8 @@ class PickAndPlace(Task):
         self._loaded_dataset_config = False
 
     def init_task(self) -> None:
-        self.useful = Dummy('useful')
+        self.useful = Dummy('useful')  # for variation display
+        self.cursor = Shape('cursor')  # for predict target pose display
         self.pick_dummy = Dummy('pick_dummy')
         self.place_dummy = Dummy('place_dummy')
         self.distractor_dummies = [
@@ -107,6 +108,7 @@ class PickAndPlace(Task):
         self.setup_objects(self.OBJ_LIST[index])
         self.setup_textures(self.TEX_LIST[index])
         self.setup_poses()
+        self.useful.set_name('variation_%d' % index)
         return self.OBJ_LIST[index] + self.TEX_LIST[index]
 
     def variation_count(self) -> int:
@@ -118,6 +120,7 @@ class PickAndPlace(Task):
         return True
 
     def cleanup(self) -> None:
+        self.useful.set_name('useful')
         self.success_detector.set_parent(self.place_dummy)
         [obj.remove() for obj in self.spawned_objects if obj.still_exists()]
         self.spawned_objects.clear()
@@ -208,6 +211,9 @@ class PickAndPlace(Task):
         pt.set_position(pos)
         pose = _fix_orientation(pt)
         return pose
+
+    def set_cursor_position(self, pos: np.ndarray):
+        self.cursor.set_position(pos)
 
     def _get_waypoints(self, validating=False) -> List[Waypoint]:
         waypoint_name = 'waypoint%d'

@@ -185,6 +185,8 @@ def main(argv):
             place_error.append(np.linalg.norm(predict - place_target))
             gripper.append(float(action[-1]))
 
+            task._task.set_cursor_position(predict)  # display prediction pose
+
             del conv_out, predict_pose, fc_out, action, discrete
 
             if terminate:  # task success
