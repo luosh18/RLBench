@@ -59,10 +59,10 @@ def parse_obs(obs: Observation, device):
     if FLAGS.gripper_action:
         if FLAGS.state_size == 3:
             state = np.concatenate(
-                (obs.joint_positions, [obs.gripper_open], obs.gripper_pose[:3]))
+                ([obs.gripper_open], obs.gripper_pose[:3]))
         else:
             state = np.concatenate(
-                ([obs.gripper_open], obs.gripper_pose[:3]))
+                (obs.joint_positions, [obs.gripper_open], obs.gripper_pose[:3]))
     else:
         if FLAGS.state_size == 3:
             state = obs.gripper_pose[:3]
