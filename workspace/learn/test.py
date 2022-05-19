@@ -55,8 +55,13 @@ def parse_obs(obs: Observation, device):
         2, 0, 1) / 255.0    # rgb, remember to transpose
     depth = np.expand_dims(
         obs.left_shoulder_depth, axis=0)
-    state = np.concatenate(  # remove gripper_open (it works!)
-        (obs.joint_positions, obs.gripper_pose[:3]))
+    if not FLAGS.gripper_action: 
+        state = np.concatenate(  # remove gripper_open (it works!)
+            (obs.joint_positions, obs.gripper_pose[:3]))
+    else:
+        state = np.concatenate(  # remove gripper_open (it works!)
+            (obs.joint_positions, [obs.gripper_open], obs.gripper_pose[:3]))
+
     # skip action
     return (
         torch.tensor(np.expand_dims(rgb, 0),
