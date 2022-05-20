@@ -109,8 +109,8 @@ class SequentialDataset(Dataset):
         ## for ee, get the 3d position of waypoint ##
         sampled_demo['action'] = np.concatenate((
             np.take(sampled_demo['waypoint'], [0, 1, 2], axis=1),
-            sampled_demo['gripper_action'] if FLAGS.gripper_action
-            else np.take(sampled_demo['action'], [6], axis=1)
+            sampled_demo['gripper_action'] # if FLAGS.gripper_action
+            # else np.take(sampled_demo['action'], [6], axis=1)
         ), axis=1)
 
         # print(sampled_demo['state'].shape, sampled_demo['state'][0], sep='\n')
