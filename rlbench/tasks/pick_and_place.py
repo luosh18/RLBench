@@ -75,6 +75,7 @@ class PickAndPlace(Task):
     def init_task(self) -> None:
         self.useful = Dummy('useful')  # for variation display
         self.cursor = Shape('cursor')  # for predict target pose display
+        self.another_cursor = Shape('another_cursor')  # for IK target position display
         self.pick_dummy = Dummy('pick_dummy')
         self.place_dummy = Dummy('place_dummy')
         self.distractor_dummies = [
@@ -214,6 +215,9 @@ class PickAndPlace(Task):
 
     def set_cursor_position(self, pos: np.ndarray):
         self.cursor.set_position(pos)
+
+    def set_another_cursor_position(self, pos: np.ndarray):
+        self.another_cursor.set_position(pos)
 
     def _get_waypoints(self, validating=False) -> List[Waypoint]:
         waypoint_name = 'waypoint%d'

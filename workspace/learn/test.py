@@ -200,6 +200,7 @@ def main(argv):
             gripper.append(float(action[-1]))
 
             task._task.set_cursor_position(predict)  # display prediction pose
+            task._task.set_another_cursor_position(end_position)  # display IK target pose
 
             del conv_out, predict_pose, fc_out, discrete
 
