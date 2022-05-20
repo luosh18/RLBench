@@ -2,6 +2,7 @@ import math
 import os
 from collections import OrderedDict
 from enum import Enum
+from os.path import abspath, dirname, join
 
 import numpy as np
 import torch
@@ -13,6 +14,7 @@ from rlbench.action_modes.gripper_action_modes import Discrete, StepDiscrete
 from rlbench.backend.observation import Observation
 from rlbench.environment import Environment
 from rlbench.observation_config import ObservationConfig
+from rlbench.sim2real.domain_randomization import RandomizeEvery, TableRandomizationConfig
 from rlbench.tasks import ReachTarget
 from rlbench.tasks.pick_and_place_test import PickAndPlaceTest
 from torch.utils.data import DataLoader
@@ -21,6 +23,8 @@ from workspace.learn.data import SequentialDataset
 from workspace.learn.flags import FLAGS
 from workspace.models.daml import Daml, load_model
 from workspace.utils import get_logger
+
+CURRENT_DIR = dirname(abspath(__file__))
 
 
 def get_obs_config() -> ObservationConfig:
@@ -55,7 +59,7 @@ def parse_obs(obs: Observation, device):
         2, 0, 1) / 255.0    # rgb, remember to transpose
     depth = np.expand_dims(
         obs.left_shoulder_depth, axis=0)
-    if not FLAGS.gripper_action: 
+    if not FLAGS.gripper_action:
         state = np.concatenate(  # remove gripper_open (it works!)
             (obs.joint_positions, obs.gripper_pose[:3]))
     else:
@@ -84,7 +88,8 @@ def main(argv):
     if not os.path.exists(save_dir):
         print('save dir not exist!')
         return -1
-    logger = get_logger('test')
+    randomize = FLAGS.randomize
+    logger = get_logger('dr_test' if randomize else 'test')
     dataset_root = FLAGS.dataset_root
     task_name = FLAGS.task_name  # should be pick_and_place_test
     if not task_name.endswith('_test'):
@@ -101,12 +106,23 @@ def main(argv):
 
     logger.info('test with flags: %s' % str(FLAGS.flag_values_dict()))
 
+    # domain randomize
+    randomize = FLAGS.randomize
+    rand_config = TableRandomizationConfig(
+        image_directory=join(
+            CURRENT_DIR, '../../rlbench/assets/textures'),
+        randomize_arm=False
+    ) if randomize else None
+    randomize_every = RandomizeEvery.EPISODE if randomize else None
+
     # env
     obs_config = get_obs_config()
     env = Environment(
         action_mode=MoveArmThenGripper(arm_action_mode=JointPosition(False),
                                        gripper_action_mode=StepDiscrete(steps=10)),
         obs_config=obs_config,
+        randomize_every=randomize_every,
+        visual_randomization_config=rand_config,
         headless=False,
         robot_setup='jaco')
     env.launch()
@@ -212,7 +228,8 @@ def main(argv):
 
         del pre_update, batch_post_update
 
-    logger.info('success %d failed %d forced %d' % (num_success, num_failed, num_forced))
+    logger.info('success %d failed %d forced %d' %
+                (num_success, num_failed, num_forced))
 
     env.shutdown()
 
