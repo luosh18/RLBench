@@ -104,9 +104,9 @@ class SequentialDataset(Dataset):
         if not FLAGS.gripper_action:  # remove gripper_open, help gripper close
             sampled_demo['state'] = np.take(
                 sampled_demo['state'], [0, 1, 2, 3, 4, 5, 7, 8, 9], axis=1)
-        if FLAGS.gripper_action:  # use fixed gripper action
-            for action, gripper in zip(sampled_demo['action'], sampled_demo['gripper_action']):
-                action[-1] = gripper[0]
+        # if FLAGS.gripper_action:  # use fixed gripper action
+        for action, gripper in zip(sampled_demo['action'], sampled_demo['gripper_action']):
+            action[-1] = gripper[0]
         # print(sampled_demo['state'].shape, sampled_demo['state'][0], sep='\n')
         return sampled_demo
 
