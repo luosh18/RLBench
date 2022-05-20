@@ -8,7 +8,15 @@ from rlbench.backend.observation import Observation
 from rlbench.environment import Environment
 from rlbench.observation_config import ObservationConfig
 from rlbench.tasks.pick_and_place import PickAndPlace
+from rlbench import RandomizeEvery
+from rlbench.sim2real.domain_randomization import TableRandomizationConfig
 
+randomize = True
+rand_config = TableRandomizationConfig(
+    image_directory=os.path.join(
+        os.path.expanduser('~'), 'RLBench/rlbench/assets/textures'),
+    randomize_arm=False
+)
 
 # To use 'saved' demos, set the path below, and set live_demos=False
 live_demos = True
@@ -24,6 +32,8 @@ env = Environment(
                                    gripper_action_mode=StepDiscrete()),
     dataset_root=DATASET,
     obs_config=obs_config,
+    randomize_every=RandomizeEvery.EPISODE if randomize else None,
+    visual_randomization_config=rand_config if randomize else None,
     headless=False,
     robot_setup='jaco')
 env.launch()
@@ -59,9 +69,11 @@ def fn(v=0):
         task_env.step(np.concatenate(
             [observation.joint_velocities, [observation.misc['gripper_action']]]))
         obs = task_env.get_observation()
-        print(observation.gripper_open, observation.misc['gripper_action'], obs.gripper_open, obs.misc['gripper_action'])
-        if input() == 'q':
-            break
+        # print(observation.gripper_open,
+        #       observation.misc['gripper_action'], obs.gripper_open, obs.misc['gripper_action'])
+        # if input() == 'q':
+        #     break
+
 
 if __name__ == '__main__':
     while True:

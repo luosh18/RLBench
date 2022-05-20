@@ -83,3 +83,8 @@ class VisualRandomizationConfig(RandomizationConfig):
 
     def sample(self, samples: int) -> np.ndarray:
         return np.random.choice(self._imgs, samples)
+
+
+class TableRandomizationConfig(VisualRandomizationConfig):
+    def should_randomize(self, obj_name: str):
+        return ('diningTable' in obj_name)  # ignore arm

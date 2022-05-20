@@ -1,6 +1,7 @@
 import os
 import pickle
 from multiprocessing import Manager, Process
+from os.path import abspath, dirname, isfile, join
 
 import numpy as np
 import rlbench.backend.task as task
@@ -15,6 +16,8 @@ from rlbench.backend.const import *
 from rlbench.backend.observation import Observation
 from rlbench.backend.utils import task_file_to_task_class
 from rlbench.environment import Environment
+from rlbench.sim2real.domain_randomization import (RandomizeEvery,
+                                                   TableRandomizationConfig)
 
 FLAGS = flags.FLAGS
 
@@ -33,6 +36,11 @@ flags.DEFINE_integer('variations', -1,
                      'Number of variations to collect per task. -1 for all.')
 flags.DEFINE_float('simulation_timestep', 0.1,  # TODO: remember to set simulation_timestep while testing
                    'default 0.1 second for each frame')
+flags.DEFINE_bool('randomize', False,
+                  'perform visual domain randomize')
+
+
+CURRENT_DIR = dirname(abspath(__file__))
 
 
 def check_and_make(dir):
@@ -135,9 +143,19 @@ def run(i, lock, task_index, variation_count, results, file_lock, tasks):
     np.random.seed(None)
     num_tasks = len(tasks)
 
+    # domain randomize
+    randomize = FLAGS.randomize
+    rand_config = TableRandomizationConfig(
+        image_directory=join(CURRENT_DIR, '../rlbench/assets/textures'),
+        randomize_arm=False
+    ) if randomize else None
+    randomize_every=RandomizeEvery.EPISODE if randomize else None
+
     rlbench_env = Environment(
         action_mode=MoveArmThenGripper(JointVelocity(), Discrete()),
         obs_config=get_obs_config(),
+        randomize_every=randomize_every,
+        visual_randomization_config=rand_config,
         headless=True,
         robot_setup='jaco')
     rlbench_env.launch()

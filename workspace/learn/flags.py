@@ -28,6 +28,8 @@ flags.DEFINE_integer('test_time', 15,
                      'time duration limit during testing (in second)')
 flags.DEFINE_bool('gripper_action', False,
                   'use fixed gripper action for training, do not change state_size, this well auto-increase it')
+flags.DEFINE_bool('randomize', False,
+                  'perform visual domain randomize')
 
 
 # Training Options
