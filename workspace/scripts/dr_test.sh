@@ -3,6 +3,6 @@ python3 learn/test.py \
     --dataset_root=$HOME/disk/dataset_dr \
     --task_name=pick_and_place_test \
     --T=40 --simulation_timestep=0.1 \
-    --state_size=9 --action_size=7 \
+    --state_size=3 --action_size=4 \
     --randomize=True \
     --iteration=75000
