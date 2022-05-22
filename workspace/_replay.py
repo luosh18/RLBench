@@ -11,7 +11,7 @@ from rlbench.tasks.pick_and_place import PickAndPlace
 from rlbench import RandomizeEvery
 from rlbench.sim2real.domain_randomization import TableRandomizationConfig
 
-randomize = True
+randomize = False
 rand_config = TableRandomizationConfig(
     image_directory=os.path.join(
         os.path.expanduser('~'), 'RLBench/rlbench/assets/textures'),
@@ -29,7 +29,7 @@ obs_config.record_gripper_closing = True
 
 env = Environment(
     action_mode=MoveArmThenGripper(arm_action_mode=JointVelocity(),
-                                   gripper_action_mode=StepDiscrete()),
+                                   gripper_action_mode=StepDiscrete(steps=10)),
     dataset_root=DATASET,
     obs_config=obs_config,
     randomize_every=RandomizeEvery.EPISODE if randomize else None,
