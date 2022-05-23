@@ -20,8 +20,8 @@ from rlbench.noise_model import NoiseModel
 from rlbench.observation_config import ObservationConfig, CameraConfig
 
 STEPS_BEFORE_EPISODE_START = 10
-ACTUATE_SPEED = 1.2
-ACTUATE_LIMIT = 5
+ACTUATE_SPEED = 0.3
+ACTUATE_LIMIT = 7
 
 from pyrep.robots.end_effectors.gripper import OPENING, CLOSING
 

@@ -128,10 +128,12 @@ class PickAndPlace(Task):
         self.spawned_objects.clear()
 
     def decorate_observation(self, observation: Observation) -> Observation:
-        if self.robot.gripper.action == CLOSING:
-            observation.gripper_open = (  # object attached then set to 0
-                CLOSING if len(self.robot.gripper.get_grasped_objects()) > 0
-                else OPENING)
+        # if self.robot.gripper.action == CLOSING:
+        #     observation.gripper_open = (  # object attached then set to 0
+        #         CLOSING if len(self.robot.gripper.get_grasped_objects()) > 0
+        #         else OPENING)
+        open_amount = self.robot.gripper.get_open_amount()
+        observation.gripper_open = sum(open_amount) / len(open_amount)
         poses = [self.pick_dummy.get_pose(),
                  self.place_dummy.get_pose(),
                  self.distractor_dummies[0].get_pose(),
