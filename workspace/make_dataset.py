@@ -88,6 +88,7 @@ def process_demo(demo):
     rgb, depth, state, action = [], [], [], []
     waypoint = []
     gripper_action = []
+    tip_pos, tip_ori, tip_lv, tip_av = [], [], [], []
     gif_frames = []
     # for each observation (frame) (sliding window: 2)
     for i, obs in enumerate(demo[1:]):
@@ -103,6 +104,10 @@ def process_demo(demo):
         waypoint.append(obs.misc['waypoint_pose'])
         gripper_action.append(
             np.array([pre_obs.misc['gripper_action']]))
+        tip_pos.append(pre_obs.misc['tip_pos'])
+        tip_ori.append(pre_obs.misc['tip_ori'])
+        tip_lv.append(obs.misc['tip_lv'])
+        tip_av.append(obs.misc['tip_av'])
         gif_frames.append(Image.fromarray(pre_obs.left_shoulder_rgb))
         # find the frame when gripper contact the target obj
         if (not contact_frame > 0) and (obs.gripper_open == 0.0):
@@ -119,6 +124,10 @@ def process_demo(demo):
         'predict': np.array(predict_pos),
         'waypoint': np.array(waypoint),
         'gripper_action': np.array(gripper_action),
+        'tip_pos': np.array(tip_pos),
+        'tip_ori': np.array(tip_ori),
+        'tip_lv': np.array(tip_lv),
+        'tip_av': np.array(tip_av),
     }
     # for name in processed_demo:
     #     print(name,  processed_demo[name][contact_frame].shape)
@@ -146,10 +155,10 @@ def run(i, lock, task_index, variation_count, results, file_lock, tasks):
     # domain randomize
     randomize = FLAGS.randomize
     rand_config = TableRandomizationConfig(
-        image_directory=join(CURRENT_DIR, '../rlbench/assets/textures'),
+        image_directory=join(CURRENT_DIR, '../rlbench/assets/table_textures'),
         randomize_arm=False
     ) if randomize else None
-    randomize_every=RandomizeEvery.EPISODE if randomize else None
+    randomize_every = RandomizeEvery.EPISODE if randomize else None
 
     rlbench_env = Environment(
         action_mode=MoveArmThenGripper(JointVelocity(), Discrete()),
