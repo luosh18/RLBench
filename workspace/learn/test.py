@@ -110,7 +110,7 @@ def main(argv):
     randomize = FLAGS.randomize
     rand_config = TableRandomizationConfig(
         image_directory=join(
-            CURRENT_DIR, '../../rlbench/assets/textures'),
+            CURRENT_DIR, '../../rlbench/assets/table_textures'),
         randomize_arm=False
     ) if randomize else None
     randomize_every = RandomizeEvery.EPISODE if randomize else None

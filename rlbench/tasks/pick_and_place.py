@@ -55,6 +55,7 @@ def _fix_orientation(point: Object) -> np.ndarray:
     point.rotate([0, math.radians(-12), 0])
     return point.get_pose()
 
+
 def fix_waypoint(waypoint: Point, update=True) -> np.ndarray:
     pose = _fix_orientation(waypoint.get_waypoint_object())
     if update:
@@ -139,6 +140,10 @@ class PickAndPlace(Task):
         observation.misc['poses'] = poses
         observation.misc['waypoint_pose'] = PickAndPlace.WAYPOINT_POSE
         observation.misc['gripper_action'] = self.robot.gripper.action
+        tip = self.robot.arm.get_tip()
+        observation.misc['tip_pos'] = tip.get_position()
+        observation.misc['tip_ori'] = tip.get_orientation()
+        observation.misc['tip_lv'], observation.misc['tip_av'] = tip.get_velocity()
         return observation
 
     def get_low_dim_state(self) -> np.ndarray:

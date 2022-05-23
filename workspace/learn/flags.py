@@ -35,6 +35,8 @@ flags.DEFINE_bool('randomize', False,
 # Training Options
 flags.DEFINE_integer('dataset_seed', 42,
                      'random seed for dataset')
+flags.DEFINE_integer('resume', 0,
+                     'not resume: 0, else resume from this iteration ')
 flags.DEFINE_integer('iteration', 75000,
                      'number of meta-training iterations  -- 75000 for p&p')
 flags.DEFINE_integer('save_iter', 500,

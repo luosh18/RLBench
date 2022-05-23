@@ -6,15 +6,17 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from workspace.learn.data import PairDataset
 from workspace.learn.flags import FLAGS
-from workspace.models.daml import Daml, save_model
+from workspace.models.daml import Daml, load_model, save_model
 from workspace.utils import check_and_make, get_logger
 
 
 def main(argv):
     save_dir = FLAGS.save_dir
+    resume = FLAGS.resume
     if check_and_make(FLAGS.save_dir):
-        print('save dir already exist!')
-        return
+        if FLAGS.resume == 0:
+            print('save dir already exist!')
+            return
     logger = get_logger('train')
     iteration = FLAGS.iteration
     save_iter = FLAGS.save_iter
@@ -41,6 +43,8 @@ def main(argv):
 
     model = Daml()
     meta_optimizer = torch.optim.Adam(model.parameters())
+    if resume:
+        load_model(model, meta_optimizer, resume)
 
     epoch = 0
     adapt_running_loss = torch.zeros(
@@ -48,7 +52,7 @@ def main(argv):
     meta_running_loss = torch.zeros(
         3, device=model.device, requires_grad=False)
 
-    for i in tqdm(range(iteration)):
+    for i in tqdm(range(resume, iteration)):
         model.zero_grad()  # remember to zero grad
 
         if i % save_iter == 0:

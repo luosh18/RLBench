@@ -377,6 +377,9 @@ def save_model(model: Daml, optim: torch.optim.Optimizer, name):
     name = str(name)
     check_and_make(save_dir)
     filename = os.path.join(save_dir, name + '.pt')
+    if os.path.exists(filename):
+        if input('overwrite current save: %s ?' % filename) != 'y':
+            return
     torch.save(model.state_dict(), filename)
     # save meta_named_parameters (backup)
     torch.save(OrderedDict(model.meta_named_parameters()),
