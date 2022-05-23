@@ -110,8 +110,8 @@ def process_demo(demo):
         tip_av.append(obs.misc['tip_av'])
         gif_frames.append(Image.fromarray(pre_obs.left_shoulder_rgb))
         # find the frame when gripper contact the target obj
-        if (not contact_frame > 0) and (obs.gripper_open == 0.0):
-            contact_frame = i  # the frame before gripper closed
+        if (not contact_frame > 0) and (obs.gripper_action < 0.5):
+            contact_frame = i  # the frame when gripper_action is closing
     contact_pos = demo[contact_frame].gripper_pose[:3]
     end_pos = demo[-1].gripper_pose[:3]
     predict_pos = [contact_pos if i <= contact_frame else end_pos
