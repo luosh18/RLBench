@@ -4,4 +4,4 @@ python3 learn/train.py \
     --task_name=pick_and_place \
     --T=40 --simulation_timestep=0.1 \
     --state_size=9 --action_size=7 \
-    --randomize=True
+    --randomize=True --iteration=150000
